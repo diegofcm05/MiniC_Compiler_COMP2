@@ -5,13 +5,7 @@ import org.antlr.v4.runtime.tree.*;
 
 public class Main {
 
-    static final String RESET  = "\u001B[0m";
-    static final String BLUE   = "\u001B[34m";
-    static final String GREEN  = "\u001B[32m";
-    static final String YELLOW = "\u001B[33m";
-    static final String CYAN   = "\u001B[36m";
-    static final String GRAY   = "\u001B[90m";
-    static final String RED    = "\u001B[31m";
+
 
     public static void main(String[] args) throws Exception {
 
@@ -31,6 +25,8 @@ public class Main {
 
         CommonTokenStream tokens = new CommonTokenStream(lexer);
 
+
+
         //parser con listener de errores
         MiniCParser parser = new MiniCParser(tokens);
         parser.removeErrorListeners();
@@ -40,8 +36,8 @@ public class Main {
         ParseTree tree = parser.program();
 
         //header del parse tree
-        System.out.println(CYAN + "PARSE TREE — Mini-C Compiler" + RESET);
-        System.out.println(CYAN + "=============================" + RESET);
+        System.out.println("PARSE TREE — Mini-C Compiler" );
+        System.out.println("=============================" );
         System.out.println();
 
         //Imprimir arbol solo si no hay errores
@@ -49,19 +45,19 @@ public class Main {
         if (totalErrors == 0) {
             printTree(tree, parser, "", true);
         } else {
-            System.out.println(RED + "  No se muestra el árbol debido a errores." + RESET);
+            System.out.println("  No se muestra el árbol debido a errores.");
         }
 
         //Resumen
         System.out.println();
-        System.out.println(GRAY + "=======================================" + RESET);
-        System.out.println(GRAY + " Tokens procesados  : " + tokens.size() + RESET);
+        System.out.println( "=======================================" );
+        System.out.println( " Tokens procesados  : " + tokens.size() );
         if (totalErrors == 0) {
-            System.out.println(GREEN + " Errores encontrados: 0 ✓" + RESET);
+            System.out.println(" Errores encontrados: 0 " );
         } else {
-            System.out.println(RED + " Errores encontrados: " + totalErrors + RESET);
+            System.out.println( " Errores encontrados: " + totalErrors );
         }
-        System.out.println(GRAY + "=======================================" + RESET);
+        System.out.println("=======================================" );
     }
 
     static void printTree(ParseTree tree, MiniCParser parser, String prefix, boolean isLast) {
@@ -71,15 +67,14 @@ public class Main {
         if (tree instanceof TerminalNode) {
             String text = tree.getText();
             if (text.equals("<EOF>")) {
-                System.out.println(prefix + connector + GRAY + "<EOF>" + RESET);
+                System.out.println(prefix + connector + "<EOF>" );
             } else {
-                System.out.println(prefix + connector + YELLOW + text + RESET);
+                System.out.println(prefix + connector +  text );
             }
         } else {
             RuleContext ctx = (RuleContext) tree;
             String ruleName = parser.getRuleNames()[ctx.getRuleIndex()];
-            String color = getRuleColor(ruleName);
-            System.out.println(prefix + connector + color + "[" + ruleName + "]" + RESET);
+            System.out.println(prefix + connector + "[" + ruleName + "]" );
 
             int childCount = tree.getChildCount();
             for (int i = 0; i < childCount; i++) {
@@ -88,25 +83,7 @@ public class Main {
         }
     }
 
-    static String getRuleColor(String ruleName) {
-        return switch (ruleName) {
-            case "program"                             -> CYAN;
-            case "funcDef"                             -> BLUE;
-            case "compoundStmt"                        -> BLUE;
-            case "declaration", "typeSpecifier"        -> GREEN;
-            case "ifStmt", "whileStmt", "forStmt",
-                 "doWhileStmt", "returnStmt",
-                 "breakStmt", "continueStmt",
-                 "exprStmt"                            -> "\u001B[35m";
-            case "expr", "assignmentExpr",
-                 "logicalOrExpr", "logicalAndExpr",
-                 "equalityExpr", "relationalExpr",
-                 "additiveExpr", "multiplicativeExpr",
-                 "unaryExpr"                           -> YELLOW;
-            case "primary", "call", "lvalue"           -> "\u001B[96m";
-            default                                    -> RESET;
-        };
-    }
+
 }
 
 
