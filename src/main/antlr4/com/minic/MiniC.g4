@@ -13,7 +13,7 @@ declaratorList
     ;
 
 declarator
-    : IDENTIFIER ('[' INTEGER_CONST ']')*
+    : IDENTIFIER ('[' INTEGER_CONST ']')* ('=' expr)?
     | '*' declarator
     ;
 
@@ -50,6 +50,8 @@ statement
     | assignStmt
     | returnStmt
     | exprStmt
+    | breakStmt
+    | continueStmt
     ;
 
 ifStmt
@@ -78,6 +80,14 @@ returnStmt
 
 exprStmt
     : expr? ';'
+    ;
+
+breakStmt
+    : 'break' ';'
+    ;
+
+continueStmt
+    : 'continue' ';'
     ;
 
 expr
