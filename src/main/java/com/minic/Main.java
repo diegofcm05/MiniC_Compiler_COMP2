@@ -24,14 +24,31 @@ public class Main {
         lexer.addErrorListener(lexerErrors);
 
         CommonTokenStream tokens = new CommonTokenStream(lexer);
+        tokens.fill();
+
+        System.out.println( "TOKENS" );
+        System.out.println( "══════" );
+        for (Token tok : tokens.getTokens()) {
+            if (tok.getType() == Token.EOF) continue;
+            String typeName = MiniCLexer.VOCABULARY.getSymbolicName(tok.getType());
+            if (typeName == null) typeName = "'" + tok.getText() + "'";
+            System.out.printf( "  [%3d:%2d]" +
+                            "  %-22s  " + "%s" + "%n",
+                    tok.getLine(), tok.getCharPositionInLine(),
+                    typeName, tok.getText());
+        }
+        System.out.println();
 
 
 
-        //parser con listener de errores
+    //parser con listener de errores
         MiniCParser parser = new MiniCParser(tokens);
         parser.removeErrorListeners();
         MiniCErrorListener parserErrors = new MiniCErrorListener("SINTÁCTICO");
         parser.addErrorListener(parserErrors);
+
+
+
 
         ParseTree tree = parser.program();
 
