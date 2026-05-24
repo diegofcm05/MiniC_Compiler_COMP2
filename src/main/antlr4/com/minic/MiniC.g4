@@ -14,6 +14,7 @@ declaratorList
 
 declarator
     : IDENTIFIER ('[' INTEGER_CONST ']')* ('=' expr)?
+    | IDENTIFIER '[' INTEGER_CONST ']' '[' INTEGER_CONST ']'
     | '*' declarator
     ;
 
@@ -35,6 +36,7 @@ params
 
 param
     : typeSpecifier declarator
+    | typeSpecifier IDENTIFIER '[' ']' '[' INTEGER_CONST ']'
     ;
 
 compoundStmt
@@ -143,6 +145,7 @@ call
 
 lvalue
     : IDENTIFIER ('[' expr ']')*
+    | IDENTIFIER '[' expr ']' '[' expr ']'
     ;
 
 // ─── TOKENS ──────────────────────────────────────────────────────────────────
