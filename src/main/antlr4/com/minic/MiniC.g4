@@ -47,7 +47,6 @@ statement
     | whileStmt
     | forStmt
     | doWhileStmt
-    | assignStmt
     | returnStmt
     | exprStmt
     | breakStmt
@@ -70,10 +69,6 @@ doWhileStmt
     : 'do' statement 'while' '(' expr ')' ';'
     ;
 
-assignStmt
-    : lvalue '=' expr ';'
-    ;
-
 returnStmt
     : 'return' expr? ';'
     ;
@@ -91,12 +86,20 @@ continueStmt
     ;
 
 expr
-    : logicalOrExpr
+    : assignmentExpr
     ;
+
+assignmentExpr
+    : lvalue '=' assignmentExpr
+    | logicalOrExpr
+    ;
+
 
 logicalOrExpr
     : logicalAndExpr ('||' logicalAndExpr)*
     ;
+
+
 
 logicalAndExpr
     : equalityExpr ('&&' equalityExpr)*
@@ -145,8 +148,8 @@ lvalue
 // ─── TOKENS ──────────────────────────────────────────────────────────────────
 IDENTIFIER      : [A-Za-z_][A-Za-z0-9_]* ;
 INTEGER_CONST   : [0-9]+ ;
-CHAR_CONST      : '\'' . '\'' ;
-STRING_LITERAL  : '"' (~['\n\r])* '"' ;
+CHAR_CONST     : '\'' ( ~['\\\n] | '\\' . ) '\'' ;
+STRING_LITERAL : '"'  ( ~["\\\n] | '\\' . )* '"' ;
 
 WS              : [ \t\r\n]+ -> skip ;
 LINE_COMMENT    : '//' ~[\r\n]* -> skip ;
