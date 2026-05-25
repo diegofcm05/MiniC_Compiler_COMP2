@@ -1,17 +1,26 @@
-int mayor(int a, int b) {
-    if (a > b) {
-        return a + b / 5;
-    } else {
-        return a * b + 3;
-    }
+void imprimir_separador() {
+    print_str("--- --- ---\n");
 }
 
 int main() {
-    int x;
-    int y;
-    x = 15;
-    y = 30;
-    print_int(mayor(x, y));
-    println();
+    int contador = 0;
+    char letra = 'A';
+    char tab = '\t';
+    bool activo = true;
+
+    while (activo) {
+        print_str("Iteracion:\t");
+        print_int(contador);
+        print_str("\n");
+        contador = contador + 1;
+        if (contador == 3) {
+            activo = false;
+        }
+    }
+
+    imprimir_separador();
+    print_str("Letra inicial: ");
+    print_char(letra);
+    print_str("\n");
     return 0;
 }
