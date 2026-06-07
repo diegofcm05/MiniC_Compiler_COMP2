@@ -60,6 +60,12 @@ public class Main {
         //Imprimir arbol solo si no hay errores
         int totalErrors = lexerErrors.getErrorCount() + parserErrors.getErrorCount();
         if (totalErrors == 0) {
+            SemanticVisitor visitor = new SemanticVisitor();
+            visitor.visit(tree);
+            visitor.imprimirTabla();
+        }
+
+        if (totalErrors == 0) {
             printTree(tree, parser, "", true);
         } else {
             System.out.println("  No se muestra el árbol debido a errores.");
