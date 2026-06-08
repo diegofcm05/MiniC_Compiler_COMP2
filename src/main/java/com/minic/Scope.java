@@ -4,8 +4,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class Scope {
-    public String nombre;          // nombre del ámbito, ej: "global", "main", "factorial"
-    public Scope padre;            // ámbito que lo contiene
+    public String nombre;   // nombre del scope lol
+    public Scope padre;     // scope padre que lo contiene
     private Map<String, Symbol> simbolos = new LinkedHashMap<>();
 
     public Scope(String nombre, Scope padre) {
@@ -13,14 +13,14 @@ public class Scope {
         this.padre  = padre;
     }
 
-    // Agregar un símbolo en este ámbito
+    // Agregar un símbolo en este scope (false si ya existe → redeclaración)
     public boolean agregar(Symbol s) {
-        if (simbolos.containsKey(s.nombre)) return false; // ya existe → error
+        if (simbolos.containsKey(s.nombre)) return false;
         simbolos.put(s.nombre, s);
         return true;
     }
 
-    // Buscar en este ámbito y en los padres
+    // Buscar en este ámbito y en los padres (para chequeo de uso)
     public Symbol buscar(String nombre) {
         if (simbolos.containsKey(nombre)) return simbolos.get(nombre);
         if (padre != null) return padre.buscar(nombre);
