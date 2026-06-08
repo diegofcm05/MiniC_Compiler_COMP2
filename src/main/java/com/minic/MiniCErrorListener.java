@@ -5,7 +5,7 @@ import org.antlr.v4.runtime.*;
 public class MiniCErrorListener extends BaseErrorListener {
 
     private int errorCount = 0;
-    private final String tipo; // "tipo de error, si lex o parse"
+    private final String tipo;
 
     public MiniCErrorListener(String tipo) {
         this.tipo = tipo;
@@ -18,7 +18,7 @@ public class MiniCErrorListener extends BaseErrorListener {
                             String msg, RecognitionException e) {
         errorCount++;
 
-        // Mensaje más amigable
+
         String simbolo = "";
         if (offendingSymbol instanceof Token t) {
             simbolo = " → token: '" + t.getText() + "'";
@@ -33,7 +33,6 @@ public class MiniCErrorListener extends BaseErrorListener {
         return errorCount;
     }
 
-    // Traducir ANTLR a algo más legible
     private String traducirMensaje(String msg) {
         if (msg.contains("mismatched input")) {
             return "Token inesperado en esta posición";

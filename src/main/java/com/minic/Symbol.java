@@ -2,8 +2,8 @@ package com.minic;
 
 public class Symbol {
     public String nombre;
-    public String tipo;       // "int", "char", "bool", "void", "string"
-    public String categoria;  // "variable", "funcion", "parametro", "arreglo"
+    public String tipo;
+    public String categoria;
     public int linea;
 
     public Symbol(String nombre, String tipo, String categoria, int linea) {

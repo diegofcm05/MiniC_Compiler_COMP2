@@ -13,7 +13,7 @@ public class Scope {
         this.padre  = padre;
     }
 
-    // Agregar un símbolo en este scope (false si ya existe → redeclaración)
+    // Agregar un símbolo en este scope (si ya existe es una redeclaración)
     public boolean agregar(Symbol s) {
         if (simbolos.containsKey(s.nombre)) return false;
         simbolos.put(s.nombre, s);

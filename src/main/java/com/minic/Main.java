@@ -15,7 +15,6 @@ public class Main {
             input = CharStreams.fromStream(System.in);
         }
 
-        // Lexer con listener de errores
         MiniCLexer lexer = new MiniCLexer(input);
         lexer.removeErrorListeners();
         MiniCErrorListener lexerErrors = new MiniCErrorListener("LÉXICO");
@@ -24,9 +23,8 @@ public class Main {
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         tokens.fill();
 
-        // ── 1. TOKENS
         System.out.println("TOKENS");
-        System.out.println("══════");
+        System.out.println("------");
         for (Token tok : tokens.getTokens()) {
             if (tok.getType() == Token.EOF) continue;
             String typeName = MiniCLexer.VOCABULARY.getSymbolicName(tok.getType());
@@ -37,7 +35,6 @@ public class Main {
         }
         System.out.println();
 
-        // Parser con listener de errores
         MiniCParser parser = new MiniCParser(tokens);
         parser.removeErrorListeners();
         MiniCErrorListener parserErrors = new MiniCErrorListener("SINTÁCTICO");
@@ -47,21 +44,22 @@ public class Main {
 
         int totalErrors = lexerErrors.getErrorCount() + parserErrors.getErrorCount();
 
-        //Impresion del parse tree (esto se podria comentar creo)
+        /*Impresion del parse tree (esto se podria comentar creo)
         System.out.println("PARSE TREE — Mini-C Compiler");
-        System.out.println("═════════════════════════════");
+        System.out.println("-----------------------------");
         System.out.println();
         if (totalErrors == 0) {
             printTree(tree, parser, "", true);
         } else {
             System.out.println("  No se muestra el árbol debido a errores.");
         }
+
+         */
         System.out.println();
 
-        //Aqui se imprime el recorrido del visitor y la symbol table
         if (totalErrors == 0) {
             System.out.println("ANÁLISIS SEMÁNTICO — Recorrido del Visitor");
-            System.out.println("═══════════════════════════════════════════");
+            System.out.println("---------------------------------------------");
             System.out.println();
             SemanticVisitor visitor = new SemanticVisitor();
             visitor.visit(tree);
@@ -71,12 +69,11 @@ public class Main {
             totalErrors += errSem;
         }
 
-        // ── 4. RESUMEN
         System.out.println();
-        System.out.println("═══════════════════════════════════════");
+        System.out.println("---------------------------------------");
         System.out.printf(" Tokens procesados  : %d%n", tokens.size());
         System.out.printf(" Errores encontrados: %d%n", totalErrors);
-        System.out.println("═══════════════════════════════════════");
+        System.out.println("---------------------------------------");
     }
 
     static void printTree(ParseTree tree, MiniCParser parser, String prefix, boolean isLast) {

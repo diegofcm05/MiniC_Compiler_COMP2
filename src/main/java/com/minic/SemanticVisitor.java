@@ -8,7 +8,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
     public SemanticVisitor() {
         tabla.entrar("global"); // ámbito global al inicio
 
-        // ── Runtime de Mini-C ──────────────────────────────────────────
         String[] funcRuntime = {
                 "print_int", "print_char", "print_str", "print_bool",
                 "read_int",  "read_char",  "read_str"
@@ -18,7 +17,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
         }
     }
 
-    // ─── DECLARACIONES DE VARIABLES ──────────────────────────────────────────
 
     @Override
     public Void visitDeclaration(MiniCParser.DeclarationContext ctx) {
@@ -56,7 +54,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
         return visitChildren(ctx);
     }
 
-    // ─── DEFINICIÓN DE FUNCIÓN ───────────────────────────────────────────────
 
     @Override
     public Void visitFuncDef(MiniCParser.FuncDefContext ctx) {
@@ -65,8 +62,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
         String tipo   = ctx.typeSpecifier().getText();
         String nombre = ctx.IDENTIFIER().getText();
         int linea  = ctx.IDENTIFIER().getSymbol().getLine();
-
-        // 1. Registrar la función en el ámbito ACTUAL (global o padre)
         Symbol s = new Symbol(nombre, tipo, "funcion", linea);
         if (!tabla.agregar(s)) {
             System.err.printf("[ERROR SEMÁNTICO] línea %d: función '%s' ya fue declarada%n",
@@ -74,27 +69,17 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
             errores++;
         }
 
-        // 2. Abrir un nuevo ámbito con el nombre de la función
         tabla.entrar(nombre);
-
-        // 3. Registrar parámetros dentro de ese ámbito
         if (ctx.params() != null) {
             for (MiniCParser.ParamContext param : ctx.params().param()) {
                 visitParam(param);
             }
         }
-
-        // 4. Visitar el cuerpo (compoundStmt) — ya NO llamamos visitChildren
-        //    completo para evitar reprocesar params
         visit(ctx.compoundStmt());
-
-        // 5. Cerrar el ámbito de la función
         tabla.salir();
 
         return null;
     }
-
-    // ─── PARÁMETROS ──────────────────────────────────────────────────────────
 
     @Override
     public Void visitParam(MiniCParser.ParamContext ctx) {
@@ -128,7 +113,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
         return null;
     }
 
-    // ─── BLOQUES ANIDADOS (if / while / for / do-while) ──────────────────────
 
     @Override
     public Void visitCompoundStmt(MiniCParser.CompoundStmtContext ctx) {
@@ -149,7 +133,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
         return null;
     }
 
-    // ─── USO DE IDENTIFICADORES ───────────────────────────────────────────────
 
     @Override
     public Void visitLvalue(MiniCParser.LvalueContext ctx) {
@@ -177,15 +160,14 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
         return visitChildren(ctx);
     }
 
-    // ─── IMPRESIÓN DE TABLA ───────────────────────────────────────────────────
 
     public void imprimirTabla() {
         System.out.println();
         System.out.println("TABLA DE SÍMBOLOS");
-        System.out.println("══════════════════════════════════════════════════════════════════════════");
+        System.out.println("--------------------------------------------------------------------------");
         System.out.printf("%-24s %-10s %-12s %-20s %s%n",
                 "NOMBRE", "TIPO", "CATEGORÍA", "ÁMBITO", "LÍNEA");
-        System.out.println("───────────────────────────────────────────────────────────────────────────");
+        System.out.println("---------------------------------------------------------------------------");
 
         for (Scope scope : tabla.getTodos()) {
             for (Symbol s : scope.getSimbolos().values()) {
@@ -194,7 +176,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<Void> {
             }
         }
 
-        System.out.println("══════════════════════════════════════════════════════════════════════════");
+        System.out.println("--------------------------------------------------------------------------");
     }
 
     public int getErrores() { return errores; }
