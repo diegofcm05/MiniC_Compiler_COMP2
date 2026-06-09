@@ -20,7 +20,6 @@ public class SymbolTable {
         if (!pila.isEmpty()) pila.pop();
     }
 
-    // Agregar símbolo al ámbito actual
     public boolean agregar(Symbol s) {
         if (pila.isEmpty()) return false;
         return pila.peek().agregar(s);

@@ -13,21 +13,19 @@ public class Scope {
         this.padre  = padre;
     }
 
-    // Agregar un símbolo en este scope (si ya existe es una redeclaración)
+
     public boolean agregar(Symbol s) {
         if (simbolos.containsKey(s.nombre)) return false;
         simbolos.put(s.nombre, s);
         return true;
     }
 
-    // Buscar en este ámbito y en los padres (para chequeo de uso)
     public Symbol buscar(String nombre) {
         if (simbolos.containsKey(nombre)) return simbolos.get(nombre);
         if (padre != null) return padre.buscar(nombre);
         return null;
     }
 
-    // Buscar solo en este ámbito (para detectar redeclaraciones)
     public Symbol buscarLocal(String nombre) {
         return simbolos.getOrDefault(nombre, null);
     }
