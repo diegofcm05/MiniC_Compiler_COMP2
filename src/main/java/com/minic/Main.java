@@ -44,7 +44,6 @@ public class Main {
 
         int totalErrors = lexerErrors.getErrorCount() + parserErrors.getErrorCount();
 
-        /*Impresion del parse tree (esto se podria comentar creo)
         System.out.println("PARSE TREE — Mini-C Compiler");
         System.out.println("-----------------------------");
         System.out.println();
@@ -54,7 +53,6 @@ public class Main {
             System.out.println("  No se muestra el árbol debido a errores.");
         }
 
-         */
         System.out.println();
 
         if (totalErrors == 0) {
