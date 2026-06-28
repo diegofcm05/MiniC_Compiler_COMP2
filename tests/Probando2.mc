@@ -1,39 +1,19 @@
-int suma(int a, int b) {
-    return a + b;
-}
-
-void imprimir(int valor) {
-    print_int(valor);
-}
-
-int factorial(int n) {
-    if (n <= 1) {
-        return 1;
-    }
-    return n * factorial(n - 1);
-}
-
-void sinRetorno(int x) {
-    int resultado = x * 2;
-}
-
 int main() {
 
-    int r1 = suma(5);
+    while (true) {
+        if (true) {
+            break;             // OK — el while exterior cuenta
+            continue;          // OK
+        }
+    }
 
-    int r2 = suma(5, 10, 3);
-
-    int r3 = imprimir(5);
-
-    void r4 = suma(1, 2);
-
-    sinRetorno(10);
-
-    int r5 = sinRetorno(10);
-
-    suma(5, 10);
-
-    int r6 = noExisteFunc(5);
+    int i = 0;
+    for (i = 0; i < 5; i = i + 1) {
+        while (true) {
+            break;             // OK — rompe el while interior
+        }
+        continue;               // OK — el for exterior cuenta
+    }
 
     return 0;
 }

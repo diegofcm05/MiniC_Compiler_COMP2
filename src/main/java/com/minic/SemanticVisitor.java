@@ -8,8 +8,8 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     private SymbolTable tabla   = new SymbolTable();
     private int         errores = 0;
-
     private String tipoRetornoActual = null;
+    private int nivelLoop = 0;
 
     public SemanticVisitor() {
         tabla.entrar("global");
@@ -110,8 +110,15 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         String tipoRetornoPrevio = tipoRetornoActual;
         tipoRetornoActual = tipo;
 
+        // Una función nueva empieza fuera de cualquier loop, sin importar
+        // si fue definida "dentro" de otra textualmente (Mini-C no permite
+        // funciones anidadas, pero esto protege el contador igual).
+        int nivelLoopPrevio = nivelLoop;
+        nivelLoop = 0;
+
         visit(ctx.compoundStmt());
 
+        nivelLoop = nivelLoopPrevio;
         tipoRetornoActual = tipoRetornoPrevio;
 
         tabla.salir();
@@ -192,8 +199,34 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return tipoExpr;
     }
 
+    // ─── BREAK / CONTINUE — solo válidos dentro de un loop ───────────────────
+    // breakStmt/continueStmt son hojas simples en la gramática, sin ninguna
+    // referencia a su contexto. La única forma de saber si están dentro de
+    // un while/for/do-while es que el visitor lleve la cuenta de en cuántos
+    // niveles de loop está anidado actualmente (nivelLoop). Si aparecen con
+    // el contador en 0, no hay ningún loop que los contenga → error.
+
+    @Override
+    public String visitBreakStmt(MiniCParser.BreakStmtContext ctx) {
+        if (nivelLoop == 0) {
+            error(ctx.getStart().getLine(), "'break' fuera de un ciclo");
+        }
+        return null;
+    }
+
+    @Override
+    public String visitContinueStmt(MiniCParser.ContinueStmtContext ctx) {
+        if (nivelLoop == 0) {
+            error(ctx.getStart().getLine(), "'continue' fuera de un ciclo");
+        }
+        return null;
+    }
+
     @Override
     public String visitIfStmt(MiniCParser.IfStmtContext ctx) {
+        // if NO es un loop, así que NO incrementa nivelLoop — un break/continue
+        // dentro de un if (pero fuera de cualquier while/for) sigue dependiendo
+        // del nivelLoop heredado de quien contiene al if.
         String tipoCond = visit(ctx.expr());
         if (tipoCond != null && !tipoCond.equals("bool")) {
             error(ctx.getStart().getLine(),
@@ -214,13 +247,17 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
                     "la condición de 'while' debe ser 'bool', se recibió '" + tipoCond + "'");
         }
 
+        nivelLoop++;
         visit(ctx.statement());
+        nivelLoop--;
         return null;
     }
 
     @Override
     public String visitDoWhileStmt(MiniCParser.DoWhileStmtContext ctx) {
+        nivelLoop++;
         visit(ctx.statement());
+        nivelLoop--;
 
         String tipoCond = visit(ctx.expr());
         if (tipoCond != null && !tipoCond.equals("bool")) {
@@ -247,7 +284,9 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             }
         }
 
+        nivelLoop++;
         visit(ctx.statement());
+        nivelLoop--;
         return null;
     }
 
@@ -419,11 +458,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return s.tipo;
     }
 
-    // ─── LLAMADA A FUNCIÓN — aridad y tipos de argumentos ────────────────────
-    // Compara la cantidad de argumentos contra el número de parámetros
-    // declarados (aridad), y luego el tipo de cada argumento contra el
-    // tipo de su parámetro correspondiente, posición por posición.
-
     @Override
     public String visitCall(MiniCParser.CallContext ctx) {
         String nombre = ctx.IDENTIFIER().getText();
@@ -457,7 +491,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             return s.tipo;
         }
 
-        // Chequeo de tipo posición por posición.
         if (tiposParams != null) {
             for (int i = 0; i < tiposParams.size(); i++) {
                 String tipoEsperado = tiposParams.get(i);
