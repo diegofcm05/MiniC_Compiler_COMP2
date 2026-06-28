@@ -13,6 +13,30 @@ int factorial(int n) {
     }
     return resultado;
 }
+/*
+int sumar(int a, int b) {
+    return "hola";      // ERROR: se esperaba 'int', se recibió 'string'
+}
+
+void saludar() {
+    return 5;            // ERROR: función 'void' no puede retornar un valor
+}
+
+int factoriales(int n) {
+    return;               // ERROR: función de tipo 'int' debe retornar un valor
+}
+
+int main() {
+    int arr[5] = 3;       // ERROR: no se puede inicializar el arreglo con un valor escalar
+    return 0;
+}
+*/
+
+
+void saludar() {
+    print_str("hola\n");
+    return;                 // OK, void sin valor
+}
 
 int main() {
     int x = 5;
@@ -29,7 +53,7 @@ int main() {
         for (j = 1; j <= 10; j = j + 1) {
                 if (j == 5) {
                     if ( i == 2){
-                        int pene = 0;
+                        int post = 0;
                         continue;
                     }
                 }
@@ -40,6 +64,7 @@ int main() {
         print_str("\n");
         i = i + 1;
     }
+
 
     print_int(factorial(5));
     print_str("\n");

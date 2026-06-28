@@ -7,6 +7,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     private SymbolTable tabla   = new SymbolTable();
     private int         errores = 0;
+    private String tipoRetornoActual = null;
 
     public SemanticVisitor() {
         tabla.entrar("global");
@@ -55,12 +56,20 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
                 error(linea, "'" + nombre + "' ya fue declarado en este ámbito");
             }
 
-            // Si hay inicialización (expr), chequear tipo del lado derecho
             if (decl.expr() != null) {
-                String tipoExpr = visit(decl.expr());
-                if (tipoExpr != null && !tipoExpr.equals(tipo)) {
-                    error(linea, "no se puede inicializar '" + nombre + "' de tipo '"
-                            + tipo + "' con valor de tipo '" + tipoExpr + "'");
+                // Un arreglo (ej: int arr[5] = 3;) no puede inicializarse
+                // con un único valor escalar — la gramática lo permite
+                // sintácticamente, pero semánticamente no tiene sentido:
+                // un arreglo de 5 enteros no es lo mismo que un solo entero.
+                if (categoria.equals("arreglo")) {
+                    error(linea, "no se puede inicializar el arreglo '" + nombre
+                            + "' con un valor escalar");
+                } else {
+                    String tipoExpr = visit(decl.expr());
+                    if (tipoExpr != null && !tipoExpr.equals(tipo)) {
+                        error(linea, "no se puede inicializar '" + nombre + "' de tipo '"
+                                + tipo + "' con valor de tipo '" + tipoExpr + "'");
+                    }
                 }
             }
         }
@@ -96,7 +105,14 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             }
         }
 
+        // Guardar el tipo de retorno previo (por seguridad, aunque Mini-C
+        // no permite funciones anidadas) y fijar el de esta función
+        String tipoRetornoPrevio = tipoRetornoActual;
+        tipoRetornoActual = tipo;
+
         visit(ctx.compoundStmt());
+
+        tipoRetornoActual = tipoRetornoPrevio; // restaurar
 
         tabla.salir();
 
@@ -150,9 +166,100 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return null;
     }
 
+    // ─── RETURN — el tipo de la expresión debe coincidir con el tipo ─────────
+    // de retorno de la función en la que aparece. Sin este método, ANTLR
+    // usaba visitChildren por defecto y NUNCA comparaba el tipo retornado
+    // contra el tipo declarado de la función (mismo patrón de bug que
+    // 'while'/'if' antes de corregirlos).
+
+    @Override
+    public String visitReturnStmt(MiniCParser.ReturnStmtContext ctx) {
+        int linea = ctx.getStart().getLine();
+
+        if (ctx.expr() == null) {
+            // 'return;' sin valor — solo válido si la función es void
+            if (tipoRetornoActual != null && !tipoRetornoActual.equals("void")) {
+                error(linea, "función de tipo '" + tipoRetornoActual
+                        + "' debe retornar un valor");
+            }
+            return null;
+        }
+
+        String tipoExpr = visit(ctx.expr());
+
+        if (tipoRetornoActual != null && tipoExpr != null) {
+            if (tipoRetornoActual.equals("void")) {
+                error(linea, "función de tipo 'void' no puede retornar un valor");
+            } else if (!tipoRetornoActual.equals(tipoExpr)) {
+                error(linea, "se esperaba retornar '" + tipoRetornoActual
+                        + "', se recibió '" + tipoExpr + "'");
+            }
+        }
+
+        return tipoExpr;
+    }
+
+    @Override
+    public String visitIfStmt(MiniCParser.IfStmtContext ctx) {
+        String tipoCond = visit(ctx.expr());
+        if (tipoCond != null && !tipoCond.equals("bool")) {
+            error(ctx.getStart().getLine(),
+                    "la condición de 'if' debe ser 'bool', se recibió '" + tipoCond + "'");
+        }
+
+        for (MiniCParser.StatementContext stmt : ctx.statement()) {
+            visit(stmt);
+        }
+        return null;
+    }
+
+    @Override
+    public String visitWhileStmt(MiniCParser.WhileStmtContext ctx) {
+        String tipoCond = visit(ctx.expr());
+        if (tipoCond != null && !tipoCond.equals("bool")) {
+            error(ctx.getStart().getLine(),
+                    "la condición de 'while' debe ser 'bool', se recibió '" + tipoCond + "'");
+        }
+
+        visit(ctx.statement());
+        return null;
+    }
+
+    @Override
+    public String visitDoWhileStmt(MiniCParser.DoWhileStmtContext ctx) {
+        visit(ctx.statement());
+
+        String tipoCond = visit(ctx.expr());
+        if (tipoCond != null && !tipoCond.equals("bool")) {
+            error(ctx.getStart().getLine(),
+                    "la condición de 'do-while' debe ser 'bool', se recibió '" + tipoCond + "'");
+        }
+        return null;
+    }
+
+    @Override
+    public String visitForStmt(MiniCParser.ForStmtContext ctx) {
+        visit(ctx.exprStmt());
+
+        List<MiniCParser.ExprContext> expresiones = ctx.expr();
+        if (!expresiones.isEmpty()) {
+            String tipoCond = visit(expresiones.get(0));
+            if (tipoCond != null && !tipoCond.equals("bool")) {
+                error(ctx.getStart().getLine(),
+                        "la condición de 'for' debe ser 'bool', se recibió '" + tipoCond + "'");
+            }
+
+            if (expresiones.size() > 1) {
+                visit(expresiones.get(1));
+            }
+        }
+
+        visit(ctx.statement());
+        return null;
+    }
+
     @Override
     public String visitAssignmentExpr(MiniCParser.AssignmentExprContext ctx) {
-        // assignmentExpr : lvalue '=' assignmentExpr | logicalOrExpr ;
         if (ctx.lvalue() != null) {
             int linea = ctx.getStart().getLine();
             String nombre = ctx.lvalue().IDENTIFIER().getText();
@@ -168,15 +275,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         }
         return visit(ctx.logicalOrExpr());
     }
-
-    // ─── OPERADORES LÓGICOS (&&, ||) — requieren bool, retornan bool ─────────
-    // IMPORTANTE: solo se valida el tipo si REALMENTE hay más de un operando,
-    // es decir, si el operador && o || está presente en el código fuente.
-    // Si hay un solo operando (caso normal al bajar por la cascada de
-    // precedencia sin que haya operación), simplemente se propaga su tipo
-    // sin compararlo contra 'bool'. Sin este chequeo de cantidad, cualquier
-    // expresión —aunque no tuviera && / ||— era forzada a ser bool en cada
-    // nivel de la cascada, generando errores falsos repetidos.
 
     @Override
     public String visitLogicalOrExpr(MiniCParser.LogicalOrExprContext ctx) {
@@ -250,6 +348,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return "bool";
     }
 
+
     @Override
     public String visitAdditiveExpr(MiniCParser.AdditiveExprContext ctx) {
         return chequearAritmetico(ctx.multiplicativeExpr(), ctx.getStart().getLine());
@@ -277,7 +376,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         }
         return "int";
     }
-
 
     @Override
     public String visitUnaryExpr(MiniCParser.UnaryExprContext ctx) {
@@ -347,7 +445,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         return s.tipo;
     }
-
 
     public void imprimirTabla() {
         System.out.println();
