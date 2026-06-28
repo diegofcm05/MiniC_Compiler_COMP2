@@ -1,5 +1,6 @@
 package com.minic;
 
+import com.minic.ir.TACGenerator;
 import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.tree.*;
 
@@ -52,19 +53,25 @@ public class Main {
         } else {
             System.out.println("  No se muestra el árbol debido a errores.");
         }
-
         System.out.println();
 
+        SemanticVisitor visitor = null;
         if (totalErrors == 0) {
             System.out.println("ANÁLISIS SEMÁNTICO — Recorrido del Visitor");
-            System.out.println("---------------------------------------------");
+            System.out.println("-------------------------------------------");
             System.out.println();
-            SemanticVisitor visitor = new SemanticVisitor();
+            visitor = new SemanticVisitor();
             visitor.visit(tree);
             visitor.imprimirTabla();
 
-            int errSem = visitor.getErrores();
-            totalErrors += errSem;
+            totalErrors += visitor.getErrores();
+        }
+
+        // Solo se genera si no hubo NINGÚN error
+        if (totalErrors == 0) {
+            TACGenerator tacGen = new TACGenerator(visitor.getTabla());
+            tacGen.visit(tree);
+            tacGen.imprimirCodigo();
         }
 
         System.out.println();
