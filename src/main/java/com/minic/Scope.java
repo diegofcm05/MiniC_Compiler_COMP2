@@ -13,6 +13,11 @@ public class Scope {
         this.padre  = padre;
     }
 
+    public String rutaCompleta() {
+        if (padre == null) return nombre;
+        return padre.rutaCompleta() + " > " + nombre;
+    }
+
 
     public boolean agregar(Symbol s) {
         if (simbolos.containsKey(s.nombre)) return false;

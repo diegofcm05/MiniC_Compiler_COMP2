@@ -1,16 +1,27 @@
 package com.minic;
 
+import java.util.List;
+
 public class Symbol {
     public String nombre;
     public String tipo;
     public String categoria;
     public int linea;
+    public List<String> tiposParametros;
 
+    //variables
     public Symbol(String nombre, String tipo, String categoria, int linea) {
-        this.nombre    = nombre;
-        this.tipo      = tipo;
+        this.nombre = nombre;
+        this.tipo = tipo;
         this.categoria = categoria;
-        this.linea     = linea;
+        this.linea = linea;
+        this.tiposParametros = null;
+    }
+
+    // funciones
+    public Symbol(String nombre, String tipo, String categoria, int linea, List<String> tiposParametros) {
+        this(nombre, tipo, categoria, linea);
+        this.tiposParametros = tiposParametros;
     }
 
     @Override
