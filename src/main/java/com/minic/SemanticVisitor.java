@@ -1,24 +1,30 @@
 package com.minic;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     private SymbolTable tabla   = new SymbolTable();
     private int         errores = 0;
+
     private String tipoRetornoActual = null;
 
     public SemanticVisitor() {
         tabla.entrar("global");
 
-        String[] funcRuntime = {
-                "print_int", "print_char", "print_str", "print_bool",
-                "read_int",  "read_char",  "read_str"
-        };
-        for (String fn : funcRuntime) {
-            tabla.agregar(new Symbol(fn, "void", "funcion", 0, new ArrayList<>()));
-        }
+        registrarRuntime("print_int",  "void", "int");
+        registrarRuntime("print_char", "void", "char");
+        registrarRuntime("print_str",  "void", "string");
+        registrarRuntime("print_bool", "void", "bool");
+        registrarRuntime("read_int",   "int");
+        registrarRuntime("read_char",  "char");
+        registrarRuntime("read_str",   "string");
+    }
+
+    private void registrarRuntime(String nombre, String tipoRetorno, String... tiposParams) {
+        tabla.agregar(new Symbol(nombre, tipoRetorno, "funcion", 0, Arrays.asList(tiposParams)));
     }
 
     private void error(int linea, String msg) {
@@ -57,10 +63,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             }
 
             if (decl.expr() != null) {
-                // Un arreglo (ej: int arr[5] = 3;) no puede inicializarse
-                // con un único valor escalar — la gramática lo permite
-                // sintácticamente, pero semánticamente no tiene sentido:
-                // un arreglo de 5 enteros no es lo mismo que un solo entero.
                 if (categoria.equals("arreglo")) {
                     error(linea, "no se puede inicializar el arreglo '" + nombre
                             + "' con un valor escalar");
@@ -105,14 +107,12 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             }
         }
 
-        // Guardar el tipo de retorno previo (por seguridad, aunque Mini-C
-        // no permite funciones anidadas) y fijar el de esta función
         String tipoRetornoPrevio = tipoRetornoActual;
         tipoRetornoActual = tipo;
 
         visit(ctx.compoundStmt());
 
-        tipoRetornoActual = tipoRetornoPrevio; // restaurar
+        tipoRetornoActual = tipoRetornoPrevio;
 
         tabla.salir();
 
@@ -166,18 +166,11 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return null;
     }
 
-    // ─── RETURN — el tipo de la expresión debe coincidir con el tipo ─────────
-    // de retorno de la función en la que aparece. Sin este método, ANTLR
-    // usaba visitChildren por defecto y NUNCA comparaba el tipo retornado
-    // contra el tipo declarado de la función (mismo patrón de bug que
-    // 'while'/'if' antes de corregirlos).
-
     @Override
     public String visitReturnStmt(MiniCParser.ReturnStmtContext ctx) {
         int linea = ctx.getStart().getLine();
 
         if (ctx.expr() == null) {
-            // 'return;' sin valor — solo válido si la función es void
             if (tipoRetornoActual != null && !tipoRetornoActual.equals("void")) {
                 error(linea, "función de tipo '" + tipoRetornoActual
                         + "' debe retornar un valor");
@@ -348,7 +341,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return "bool";
     }
 
-
     @Override
     public String visitAdditiveExpr(MiniCParser.AdditiveExprContext ctx) {
         return chequearAritmetico(ctx.multiplicativeExpr(), ctx.getStart().getLine());
@@ -427,6 +419,11 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return s.tipo;
     }
 
+    // ─── LLAMADA A FUNCIÓN — aridad y tipos de argumentos ────────────────────
+    // Compara la cantidad de argumentos contra el número de parámetros
+    // declarados (aridad), y luego el tipo de cada argumento contra el
+    // tipo de su parámetro correspondiente, posición por posición.
+
     @Override
     public String visitCall(MiniCParser.CallContext ctx) {
         String nombre = ctx.IDENTIFIER().getText();
@@ -439,8 +436,38 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             return null;
         }
 
-        for (MiniCParser.ExprContext arg : ctx.expr()) {
-            visit(arg);
+        if (!s.categoria.equals("funcion")) {
+            error(linea, "'" + nombre + "' no es una función");
+            for (MiniCParser.ExprContext arg : ctx.expr()) visit(arg);
+            return s.tipo;
+        }
+
+        List<MiniCParser.ExprContext> args = ctx.expr();
+
+        List<String> tiposArgs = new ArrayList<>();
+        for (MiniCParser.ExprContext arg : args) {
+            tiposArgs.add(visit(arg));
+        }
+
+        List<String> tiposParams = s.tiposParametros;
+
+        if (tiposParams != null && tiposParams.size() != args.size()) {
+            error(linea, "función '" + nombre + "' espera " + tiposParams.size()
+                    + " argumento(s), se recibieron " + args.size());
+            return s.tipo;
+        }
+
+        // Chequeo de tipo posición por posición.
+        if (tiposParams != null) {
+            for (int i = 0; i < tiposParams.size(); i++) {
+                String tipoEsperado = tiposParams.get(i);
+                String tipoRecibido = tiposArgs.get(i);
+                if (tipoEsperado != null && tipoRecibido != null
+                        && !tipoEsperado.equals(tipoRecibido)) {
+                    error(linea, "argumento " + (i + 1) + " de '" + nombre
+                            + "' debe ser '" + tipoEsperado + "', se recibió '" + tipoRecibido + "'");
+                }
+            }
         }
 
         return s.tipo;
