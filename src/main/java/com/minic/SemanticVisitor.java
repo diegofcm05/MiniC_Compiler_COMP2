@@ -49,7 +49,100 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return "bool".equals(tipo) || "int".equals(tipo);
     }
 
-    // ─── DECLARACIONES DE VARIABLES ──────────────────────────────────────────
+
+    private Integer evaluarConstante(MiniCParser.ExprContext ctx) {
+        return evaluarConstante(ctx.assignmentExpr());
+    }
+
+    private Integer evaluarConstante(MiniCParser.AssignmentExprContext ctx) {
+        if (ctx.lvalue() != null) return null; // una asignación no es una constante
+        return evaluarConstante(ctx.logicalOrExpr());
+    }
+
+    private Integer evaluarConstante(MiniCParser.LogicalOrExprContext ctx) {
+        if (ctx.logicalAndExpr().size() != 1) return null; // hay || real, no es aritmética pura
+        return evaluarConstante(ctx.logicalAndExpr(0));
+    }
+
+    private Integer evaluarConstante(MiniCParser.LogicalAndExprContext ctx) {
+        if (ctx.equalityExpr().size() != 1) return null;
+        return evaluarConstante(ctx.equalityExpr(0));
+    }
+
+    private Integer evaluarConstante(MiniCParser.EqualityExprContext ctx) {
+        if (ctx.relationalExpr().size() != 1) return null;
+        return evaluarConstante(ctx.relationalExpr(0));
+    }
+
+    private Integer evaluarConstante(MiniCParser.RelationalExprContext ctx) {
+        if (ctx.additiveExpr().size() != 1) return null;
+        return evaluarConstante(ctx.additiveExpr(0));
+    }
+
+    private Integer evaluarConstante(MiniCParser.AdditiveExprContext ctx) {
+        List<MiniCParser.MultiplicativeExprContext> operandos = ctx.multiplicativeExpr();
+        Integer resultado = evaluarConstante(operandos.get(0));
+        if (resultado == null) return null;
+
+        int indiceOperador = 1;
+        for (int i = 1; i < operandos.size(); i++) {
+            Integer siguiente = evaluarConstante(operandos.get(i));
+            if (siguiente == null) return null;
+
+            String op = ctx.getChild(indiceOperador).getText();
+            if (op.equals("+")) resultado = resultado + siguiente;
+            else if (op.equals("-")) resultado = resultado - siguiente;
+            else return null;
+
+            indiceOperador += 2;
+        }
+        return resultado;
+    }
+
+    private Integer evaluarConstante(MiniCParser.MultiplicativeExprContext ctx) {
+        List<MiniCParser.UnaryExprContext> operandos = ctx.unaryExpr();
+        Integer resultado = evaluarConstante(operandos.get(0));
+        if (resultado == null) return null;
+
+        int indiceOperador = 1;
+        for (int i = 1; i < operandos.size(); i++) {
+            Integer siguiente = evaluarConstante(operandos.get(i));
+            if (siguiente == null) return null;
+
+            String op = ctx.getChild(indiceOperador).getText();
+            if (op.equals("*")) resultado = resultado * siguiente;
+            else if (op.equals("/")) {
+                if (siguiente == 0) return null; // evitar división por cero en compilación
+                resultado = resultado / siguiente;
+            } else if (op.equals("%")) {
+                if (siguiente == 0) return null;
+                resultado = resultado % siguiente;
+            } else return null;
+
+            indiceOperador += 2;
+        }
+        return resultado;
+    }
+
+    private Integer evaluarConstante(MiniCParser.UnaryExprContext ctx) {
+        if (ctx.primary() != null) return evaluarConstante(ctx.primary());
+
+        String op = ctx.getChild(0).getText();
+        if (!op.equals("-")) return null; // '!', '*', '&' no producen una constante entera aquí
+
+        Integer val = evaluarConstante(ctx.unaryExpr());
+        return (val == null) ? null : -val;
+    }
+
+    private Integer evaluarConstante(MiniCParser.PrimaryContext ctx) {
+        if (ctx.INTEGER_CONST() != null) {
+            return Integer.parseInt(ctx.INTEGER_CONST().getText());
+        }
+        if (ctx.expr() != null) {
+            return evaluarConstante(ctx.expr()); // paréntesis: '(' expr ')'
+        }
+        return null; // CHAR_CONST, STRING_LITERAL, true/false, lvalue, call: no es constante entera
+    }
 
     @Override
     public String visitDeclaration(MiniCParser.DeclarationContext ctx) {
@@ -59,6 +152,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             String nombre;
             String categoria;
             int dimensiones = 0;
+            int[] tamanios = null;
 
             if (decl.getChild(0).getText().equals("*")) {
                 nombre    = decl.declarator().IDENTIFIER().getText();
@@ -66,11 +160,11 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             } else if (decl.INTEGER_CONST() != null && !decl.INTEGER_CONST().isEmpty()) {
                 nombre    = decl.IDENTIFIER().getText();
                 categoria = "arreglo";
-                // decl.INTEGER_CONST() devuelve la lista de constantes entre
-                // corchetes — su tamaño ES la cantidad de dimensiones.
-                // Cubre tanto "int b[5]" (1 constante) como "int m[3][4]"
-                // (2 constantes, alternativa dedicada de la gramática).
                 dimensiones = decl.INTEGER_CONST().size();
+                tamanios = new int[dimensiones];
+                for (int i = 0; i < dimensiones; i++) {
+                    tamanios[i] = Integer.parseInt(decl.INTEGER_CONST(i).getText());
+                }
             } else {
                 nombre    = decl.IDENTIFIER().getText();
                 categoria = "variable";
@@ -85,6 +179,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
             Symbol s = new Symbol(nombre, tipo, categoria, linea);
             s.dimensiones = dimensiones;
+            s.tamanios = tamanios;
             if (!tabla.agregar(s)) {
                 error(linea, "'" + nombre + "' ya fue declarado en este ámbito");
             }
@@ -105,8 +200,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         return null;
     }
-
-    // ─── DEFINICIÓN DE FUNCIÓN ───────────────────────────────────────────────
 
     @Override
     public String visitFuncDef(MiniCParser.FuncDefContext ctx) {
@@ -152,8 +245,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return null;
     }
 
-    // ─── PARÁMETROS ──────────────────────────────────────────────────────────
-
     @Override
     public String visitParam(MiniCParser.ParamContext ctx) {
         String tipo = ctx.typeSpecifier().getText();
@@ -161,6 +252,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         String categoria;
         int    linea;
         int    dimensiones = 0;
+        int[]  tamanios = null;
 
         if (ctx.declarator() != null) {
             MiniCParser.DeclaratorContext decl = ctx.declarator();
@@ -172,10 +264,12 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             categoria = esArregloSimple ? "arreglo" : "parametro";
             if (esArregloSimple) {
                 dimensiones = decl.INTEGER_CONST().size();
+                tamanios = new int[dimensiones];
+                for (int i = 0; i < dimensiones; i++) {
+                    tamanios[i] = Integer.parseInt(decl.INTEGER_CONST(i).getText());
+                }
             }
         } else {
-            // param de matriz 2D: typeSpecifier IDENTIFIER '[' ']' '[' INTEGER_CONST ']'
-            // (la primera dimensión se omite por convención de C en parámetros)
             nombre      = ctx.IDENTIFIER().getText();
             linea       = ctx.IDENTIFIER().getSymbol().getLine();
             categoria   = "arreglo";
@@ -187,13 +281,12 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         Symbol s = new Symbol(nombre, tipo, categoria, linea);
         s.dimensiones = dimensiones;
+        s.tamanios = tamanios;
         if (!tabla.agregar(s)) {
             error(linea, "parámetro '" + nombre + "' duplicado");
         }
         return null;
     }
-
-    // ─── BLOQUES ANIDADOS (if / while / for / do-while) ──────────────────────
 
     @Override
     public String visitCompoundStmt(MiniCParser.CompoundStmtContext ctx) {
@@ -211,8 +304,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         return null;
     }
-
-    // ─── RETURN ───────────────────────────────────────────────────────────────
 
     @Override
     public String visitReturnStmt(MiniCParser.ReturnStmtContext ctx) {
@@ -240,8 +331,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return tipoExpr;
     }
 
-    // ─── BREAK / CONTINUE ──────────────────────────────────────────────────────
-
     @Override
     public String visitBreakStmt(MiniCParser.BreakStmtContext ctx) {
         if (nivelLoop == 0) {
@@ -257,8 +346,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         }
         return null;
     }
-
-    // ─── CONDICIONES DE CONTROL DE FLUJO — bool O int ────────────────────────
 
     @Override
     public String visitIfStmt(MiniCParser.IfStmtContext ctx) {
@@ -325,8 +412,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return null;
     }
 
-    // ─── ASIGNACIÓN ──────────────────────────────────────────────────────────
-
     @Override
     public String visitAssignmentExpr(MiniCParser.AssignmentExprContext ctx) {
         if (ctx.lvalue() != null) {
@@ -344,8 +429,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         }
         return visit(ctx.logicalOrExpr());
     }
-
-    // ─── OPERADORES LÓGICOS (&&, ||) ──────────────────────────────────────────
 
     @Override
     public String visitLogicalOrExpr(MiniCParser.LogicalOrExprContext ctx) {
@@ -375,8 +458,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return "bool";
     }
 
-    // ─── IGUALDAD (==, !=) ─────────────────────────────────────────────────────
-
     @Override
     public String visitEqualityExpr(MiniCParser.EqualityExprContext ctx) {
         List<MiniCParser.RelationalExprContext> operandos = ctx.relationalExpr();
@@ -401,8 +482,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return "bool";
     }
 
-    // ─── RELACIONALES (<, >, <=, >=) ─────────────────────────────────────────
-
     @Override
     public String visitRelationalExpr(MiniCParser.RelationalExprContext ctx) {
         List<MiniCParser.AdditiveExprContext> operandos = ctx.additiveExpr();
@@ -422,8 +501,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         }
         return "bool";
     }
-
-    // ─── ARITMÉTICOS (+, -, *, /, %) ─────────────────────────────────────────
 
     @Override
     public String visitAdditiveExpr(MiniCParser.AdditiveExprContext ctx) {
@@ -453,8 +530,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return "int";
     }
 
-    // ─── UNARIO (!, -, *, &) ──────────────────────────────────────────────────
-
     @Override
     public String visitUnaryExpr(MiniCParser.UnaryExprContext ctx) {
         if (ctx.primary() != null) {
@@ -475,8 +550,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return tipo;
     }
 
-    // ─── PRIMARY ──────────────────────────────────────────────────────────────
-
     @Override
     public String visitPrimary(MiniCParser.PrimaryContext ctx) {
         if (ctx.INTEGER_CONST() != null) return "int";
@@ -488,16 +561,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         if (ctx.call() != null) return visit(ctx.call());
         return null;
     }
-
-    // ─── USO DE IDENTIFICADORES (lvalue) — validación de dimensiones ─────────
-    // lvalue : IDENTIFIER ('[' expr ']')* — la cantidad de corchetes usados
-    // (ctx.expr().size()) debe coincidir con cómo fue declarado el símbolo:
-    //   - variable simple (dimensiones == 0): NO debe llevar corchetes
-    //   - arreglo (dimensiones == 1 o 2): debe llevar EXACTAMENTE esa
-    //     cantidad de corchetes para acceder a un elemento individual
-    // Si el símbolo es un arreglo y se usa SIN corchetes (ej. "b = otro;"),
-    // se está intentando tratar el arreglo completo como un valor escalar
-    // — el Inge prohíbe explícitamente la asignación arreglo-a-arreglo.
 
     @Override
     public String visitLvalue(MiniCParser.LvalueContext ctx) {
@@ -514,37 +577,41 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         if (s.categoria.equals("arreglo")) {
             if (indicesUsados == 0) {
-                // Caso C: arreglo usado sin índices — equivalente a tratar
-                // todo el arreglo como un escalar (ej. en una asignación
-                // arreglo-a-arreglo o pasándolo como valor suelto).
                 error(linea, "no se puede usar el arreglo '" + nombre
                         + "' sin índices (asignación de arreglo completo no permitida)");
                 return null;
             } else if (indicesUsados != s.dimensiones) {
-                // Caso D: cantidad de índices no coincide con cómo se declaró
                 error(linea, "'" + nombre + "' fue declarado con " + s.dimensiones
                         + " dimensión(es), se usó con " + indicesUsados + " índice(s)");
             }
         } else if (indicesUsados > 0) {
-            // Caso E: se intentan usar corchetes sobre algo que no es arreglo
             error(linea, "'" + nombre + "' no es un arreglo, no admite indexación");
         }
 
-        // Validar que cada índice usado sea de tipo int
-        for (MiniCParser.ExprContext idx : ctx.expr()) {
-            String tipoIdx = visit(idx);
+        for (int i = 0; i < ctx.expr().size(); i++) {
+            MiniCParser.ExprContext idxExpr = ctx.expr(i);
+            String tipoIdx = visit(idxExpr);
             if (tipoIdx != null && !tipoIdx.equals("int")) {
                 error(linea, "el índice de arreglo debe ser 'int', se recibió '" + tipoIdx + "'");
+                continue;
+            }
+
+            if (s.categoria.equals("arreglo") && s.tamanios != null
+                    && indicesUsados == s.dimensiones && i < s.tamanios.length) {
+
+                Integer valorConstante = evaluarConstante(idxExpr);
+                if (valorConstante != null) {
+                    int tamanio = s.tamanios[i];
+                    if (valorConstante < 0 || valorConstante >= tamanio) {
+                        error(linea, "índice " + valorConstante + " fuera de rango para '"
+                                + nombre + "' (dimensión " + (i + 1) + " tiene tamaño " + tamanio + ")");
+                    }
+                }
             }
         }
 
-        // Si se accedió correctamente con índices, el resultado es el tipo
-        // BASE del arreglo (ej. "int"), no la categoría "arreglo" — por
-        // ejemplo b[2] es un int individual, no el arreglo completo.
         return s.tipo;
     }
-
-    // ─── LLAMADA A FUNCIÓN — aridad y tipos de argumentos (con promoción) ────
 
     @Override
     public String visitCall(MiniCParser.CallContext ctx) {
@@ -593,8 +660,6 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         return s.tipo;
     }
-
-    // ─── IMPRESIÓN DE TABLA ───────────────────────────────────────────────────
 
     public void imprimirTabla() {
         System.out.println();

@@ -15,8 +15,5 @@ int main() {
         continue;               // OK — el for exterior cuenta
     }
 
-    int b[5];
-    int c[5];
-    c = b;
     return 0;
 }
