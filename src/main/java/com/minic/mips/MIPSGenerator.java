@@ -27,10 +27,6 @@ import java.util.Set;
  *
  * LIMITACIONES CONOCIDAS (no son hitos pendientes, son casos de borde
  * documentados y deliberadamente fuera de alcance por ahora):
- *   - read_str: necesita reservar un buffer en .data, distinto al resto
- *     de las funciones de runtime — no implementado.
- *   - print_str con variable (no literal): solo se soporta el literal
- *     directo, que es el único caso usado en las pruebas actuales.
  *   - Globales con inicializador ('int x = 5;' a nivel global): TACGenerator
  *     no genera TAC para esto (ver su Javadoc), así que el valor inicial
  *     nunca llega a este backend — toda global se emite sin inicializar.
@@ -479,6 +475,16 @@ public class MIPSGenerator {
                 text.append("    li $v0, 12\n    syscall\n");
                 guardarEn(destino, "$v0");
                 break;
+            case "read_str":
+                // void read_str(char* buf, int maxlen) — los dos argumentos
+                // ya llegaron por 'param' en orden; el primero es la
+                // dirección del buffer del llamador (un arreglo decae a su
+                // dirección automáticamente, igual que en cualquier otra
+                // llamada — ver TACGenerator.direccionDe).
+                cargarOperando(paramsPendientes.get(0), "$a0");
+                cargarOperando(paramsPendientes.get(1), "$a1");
+                text.append("    li $v0, 8\n    syscall\n");
+                break;
             default:
                 throw new UnsupportedOperationException(
                         "Runtime '" + nombre + "' pendiente (read_str necesita buffer en .data).");
@@ -490,8 +496,10 @@ public class MIPSGenerator {
             text.append("    la ").append(registro).append(", ")
                     .append(etiquetasLiteral.get(operando)).append("\n");
         } else {
-            throw new UnsupportedOperationException(
-                    "print_str con variable (no literal) pendiente de implementar.");
+            // Variable que ya guarda una dirección de cadena (ej. el
+            // resultado de read_str, o un parámetro string) — su valor
+            // YA ES la dirección, basta con cargarlo normalmente.
+            cargarOperando(operando, registro);
         }
     }
 

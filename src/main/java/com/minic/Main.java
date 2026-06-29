@@ -86,10 +86,17 @@ public class Main {
         MiniCErrorListener lexerErrors = new MiniCErrorListener("LÉXICO");
         lexer.addErrorListener(lexerErrors);
 
+        // Un solo interruptor para todo el diagnóstico verboso (tokens,
+        // árbol, tabla, TAC): siempre se muestra en modo diagnóstico
+        // (sin -S), y también en modo -S si se pide --dump-ir — así una
+        // sola invocación puede mostrar todo Y generar el .s a la vez,
+        // sin necesitar dos configuraciones de Run distintas.
+        boolean mostrarDiagnosticos = !modoMips || dumpIr;
+
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         tokens.fill();
 
-        if (!modoMips) {
+        if (mostrarDiagnosticos) {
             System.out.println("TOKENS");
             System.out.println("------");
             for (Token tok : tokens.getTokens()) {
@@ -112,7 +119,7 @@ public class Main {
 
         int totalErrors = lexerErrors.getErrorCount() + parserErrors.getErrorCount();
 
-        if (!modoMips) {
+        if (mostrarDiagnosticos) {
             System.out.println("PARSE TREE — Mini-C Compiler");
             System.out.println("-----------------------------");
             System.out.println();
@@ -126,14 +133,14 @@ public class Main {
 
         SemanticVisitor visitor = null;
         if (totalErrors == 0) {
-            if (!modoMips) {
+            if (mostrarDiagnosticos) {
                 System.out.println("ANÁLISIS SEMÁNTICO — Recorrido del Visitor");
                 System.out.println("-------------------------------------------");
                 System.out.println();
             }
             visitor = new SemanticVisitor();
             visitor.visit(tree);
-            if (!modoMips) {
+            if (mostrarDiagnosticos) {
                 visitor.imprimirTabla();
             }
             totalErrors += visitor.getErrores();
@@ -149,27 +156,25 @@ public class Main {
 
             java.util.List<com.minic.ir.Instruccion> codigoFinal = tacGen.getCodigo();
 
-            if (modoMips) {
-                if (optimizar) {
-                    TACGenerator.imprimirCodigo(codigoFinal,
-                            "CÓDIGO INTERMEDIO (TAC) — ANTES de optimizar");
-                    codigoFinal = com.minic.ir.OptimizadorConstantes.plegarConstantes(codigoFinal);
-                    TACGenerator.imprimirCodigo(codigoFinal,
-                            "CÓDIGO INTERMEDIO (TAC) — DESPUÉS de optimizar (constant folding)");
-                } else if (dumpIr) {
-                    TACGenerator.imprimirCodigo(codigoFinal, "CÓDIGO INTERMEDIO (TAC)");
-                }
+            if (optimizar) {
+                TACGenerator.imprimirCodigo(codigoFinal,
+                        "CÓDIGO INTERMEDIO (TAC) — ANTES de optimizar");
+                codigoFinal = com.minic.ir.OptimizadorConstantes.plegarConstantes(codigoFinal);
+                TACGenerator.imprimirCodigo(codigoFinal,
+                        "CÓDIGO INTERMEDIO (TAC) — DESPUÉS de optimizar (constant folding)");
+            } else if (mostrarDiagnosticos) {
+                TACGenerator.imprimirCodigo(codigoFinal, "CÓDIGO INTERMEDIO (TAC)");
+            }
 
+            if (modoMips) {
                 MIPSGenerator mipsGen = new MIPSGenerator(codigoFinal, visitor.getTabla());
                 String mips = mipsGen.generar();
                 Files.writeString(Paths.get(outputFile), mips);
                 System.out.println("MIPS generado en " + outputFile);
-            } else {
-                tacGen.imprimirCodigo();
             }
         }
 
-        if (!modoMips) {
+        if (mostrarDiagnosticos) {
             System.out.println();
             System.out.println("---------------------------------------");
             System.out.printf(" Tokens procesados  : %d%n", tokens.size());
@@ -179,8 +184,8 @@ public class Main {
     }
 
     static void printTree(ParseTree tree, MiniCParser parser, String prefix, boolean isLast) {
-        String connector   = isLast ? "└── " : "├── ";
-        String childPrefix = isLast ? "    " : "│   ";
+        String connector   = isLast ? "+-- " : "+-- ";
+        String childPrefix = isLast ? "    " : "|   ";
 
         if (tree instanceof TerminalNode) {
             String text = tree.getText();

@@ -25,7 +25,13 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         registrarRuntime("println",    "void");
         registrarRuntime("read_int",   "int");
         registrarRuntime("read_char",  "char");
-        registrarRuntime("read_str",   "string");
+        // void read_str(char* buf, int maxlen) — tal como lo especifica el
+        // enunciado (§3): el llamador da su propio buffer (un arreglo de
+        // char) y un tamaño máximo; read_str lo llena, no devuelve nada.
+        // "char[]" (dimensión abierta) reutiliza el mismo chequeo de forma
+        // de arreglos que ya usamos para parámetros tipo "int m[][3]" —
+        // acepta un arreglo de char de cualquier tamaño.
+        registrarRuntime("read_str",   "void", "char[]", "int");
     }
 
     private void registrarRuntime(String nombre, String tipoRetorno, String... tiposParams) {
@@ -97,6 +103,12 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
      *  resto de las dimensiones declaradas. */
     private boolean tipoArgumentoValido(String esperado, String recibido) {
         if (esperado == null || recibido == null) return true;
+        // "string" es, por especificación, un arreglo de char bajo el
+        // capó (§2.2: "string como arreglo de char... manejado a nivel de
+        // compilador como puntero a char") — un parámetro 'string' debe
+        // aceptar un arreglo de char decaído (ej. print_str(buf) después
+        // de read_str(buf, 100)), no solo un literal.
+        if (esperado.equals("string") && recibido.startsWith("char[")) return true;
         if (!esperado.contains("[")) {
             if (recibido.contains("[")) return false; // se esperaba escalar/puntero, llegó un arreglo
             return compatiblePromocion(esperado, recibido);
@@ -567,6 +579,26 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         if (ctx.lvalue() != null) {
             Token tok = ctx.getStart();
             String nombre = ctx.lvalue().IDENTIFIER().getText();
+
+            // "asignación entre arreglos no permitida" (§4 del enunciado):
+            // si el destino es un arreglo completo sin índices, es ilegal
+            // sin importar qué haya del lado derecho — chequear ANTES de
+            // delegar a visitLvalue, porque ese método le da a un arreglo
+            // sin índices un tipo "con forma" (ej. "int[5]") para permitir
+            // el caso de pasarlo como argumento de función; sin este
+            // chequeo, "a = b;" entre dos arreglos del mismo tamaño
+            // pasaría la validación de tipos por accidente.
+            boolean esDestinoArregloCompleto = !ctx.lvalue().getChild(0).getText().equals("*")
+                    && ctx.lvalue().expr().isEmpty();
+            if (esDestinoArregloCompleto) {
+                Symbol sDestino = tabla.buscar(nombre);
+                if (sDestino != null && sDestino.categoria.equals("arreglo")) {
+                    error(tok, "no se puede asignar al arreglo completo '" + nombre
+                            + "' (asignación entre arreglos no permitida)");
+                    visit(ctx.assignmentExpr()); // visitar el lado derecho igual, por si tiene sus propios errores
+                    return sDestino.tipo;
+                }
+            }
 
             String tipoIzq = visit(ctx.lvalue());
             String tipoDer = visit(ctx.assignmentExpr());
