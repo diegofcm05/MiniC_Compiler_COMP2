@@ -150,6 +150,33 @@ public class Instruccion {
         return i;
     }
 
+    /** destino = &op1   (dirección de una variable simple)
+     *  destino = &op1[op2]   (dirección de un elemento de arreglo, si indice != null;
+     *  'indice' ya viene linealizado — ver resolverIndiceArreglo en TACGenerator) */
+    public static Instruccion direccionDe(String destino, String nombre, String indice) {
+        Instruccion i = new Instruccion(OpTAC.ADDR);
+        i.destino = destino;
+        i.op1 = nombre;
+        i.op2 = indice; // null si es variable simple (sin índice)
+        return i;
+    }
+
+    /** destino = *op1   (leer el valor apuntado por 'puntero') */
+    public static Instruccion ptrLoad(String destino, String puntero) {
+        Instruccion i = new Instruccion(OpTAC.PTR_LOAD);
+        i.destino = destino;
+        i.op1 = puntero;
+        return i;
+    }
+
+    /** *destino = op1   (escribir 'valor' en la dirección apuntada por 'puntero') */
+    public static Instruccion ptrStore(String puntero, String valor) {
+        Instruccion i = new Instruccion(OpTAC.PTR_STORE);
+        i.destino = puntero;
+        i.op1 = valor;
+        return i;
+    }
+
     // ─── IMPRESIÓN LEGIBLE DEL TAC ─────────────────────────────────────────
 
     @Override
@@ -185,6 +212,14 @@ public class Instruccion {
                 return "FUNCTION " + destino + ":";
             case FUNC_FIN:
                 return "END FUNCTION " + destino;
+            case ADDR:
+                return op2 == null
+                        ? destino + " = &" + op1
+                        : destino + " = &" + op1 + "[" + op2 + "]";
+            case PTR_LOAD:
+                return destino + " = *" + op1;
+            case PTR_STORE:
+                return "*" + destino + " = " + op1;
             default:
                 return "??? instrucción desconocida ???";
         }

@@ -1,5 +1,7 @@
 package com.minic;
 
+import org.antlr.v4.runtime.Token;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -11,6 +13,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     private String tipoRetornoActual = null;
     private int nivelLoop = 0;
+    private int indiceParametroActual = 0;
 
     public SemanticVisitor() {
         tabla.entrar("global");
@@ -19,6 +22,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         registrarRuntime("print_char", "void", "char");
         registrarRuntime("print_str",  "void", "string");
         registrarRuntime("print_bool", "void", "bool");
+        registrarRuntime("println",    "void");
         registrarRuntime("read_int",   "int");
         registrarRuntime("read_char",  "char");
         registrarRuntime("read_str",   "string");
@@ -28,8 +32,9 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         tabla.agregar(new Symbol(nombre, tipoRetorno, "funcion", 0, Arrays.asList(tiposParams)));
     }
 
-    private void error(int linea, String msg) {
-        System.err.printf("[ERROR SEMÁNTICO] línea %d: %s%n", linea, msg);
+    private void error(Token tok, String msg) {
+        System.err.printf("[ERROR SEMÁNTICO] línea %d, col %d: %s%n",
+                tok.getLine(), tok.getCharPositionInLine() + 1, msg);
         errores++;
     }
 
@@ -47,6 +52,71 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     private boolean esCondicionValida(String tipo) {
         return "bool".equals(tipo) || "int".equals(tipo);
+    }
+
+    private boolean esPuntero(String tipo) {
+        return tipo != null && tipo.endsWith("*");
+    }
+
+    /** Quita el sufijo '*' — "int*" → "int". Solo llamar si esPuntero(tipo) es true. */
+    private String tipoBase(String tipo) {
+        return tipo.substring(0, tipo.length() - 1);
+    }
+
+    /** Construye el sufijo de forma de un arreglo, ej. tamanios=[2,3] → "[2][3]".
+     *  Una dimensión con tamaño -1 (o tamanios == null) se codifica como "[]"
+     *  (abierta / desconocida — no se exige tamaño exacto al pasar como argumento). */
+    private String formaArreglo(int[] tamanios, int dimensiones) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < dimensiones; i++) {
+            if (tamanios != null && i < tamanios.length && tamanios[i] >= 0) {
+                sb.append("[").append(tamanios[i]).append("]");
+            } else {
+                sb.append("[]");
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Extrae cada dimensión de un tipo-arreglo como texto, ej.
+     *  "int[2][3]" → ["2", "3"]; "int[][3]" → ["", "3"]. */
+    private List<String> extraerDimensiones(String tipoArreglo) {
+        List<String> dims = new ArrayList<>();
+        int i = tipoArreglo.indexOf('[');
+        while (i != -1) {
+            int fin = tipoArreglo.indexOf(']', i);
+            dims.add(tipoArreglo.substring(i + 1, fin));
+            i = tipoArreglo.indexOf('[', fin + 1);
+        }
+        return dims;
+    }
+
+    /** Como compatiblePromocion, pero con manejo especial para arreglos:
+     *  una dimensión que el parámetro deja abierta (ej. "int[][3]") no se
+     *  exige exacta en el argumento recibido — solo el tipo base y el
+     *  resto de las dimensiones declaradas. */
+    private boolean tipoArgumentoValido(String esperado, String recibido) {
+        if (esperado == null || recibido == null) return true;
+        if (!esperado.contains("[")) {
+            if (recibido.contains("[")) return false; // se esperaba escalar/puntero, llegó un arreglo
+            return compatiblePromocion(esperado, recibido);
+        }
+        if (!recibido.contains("[")) return false; // se esperaba un arreglo, llegó otra cosa
+
+        String baseEsp = esperado.substring(0, esperado.indexOf('['));
+        String baseRec = recibido.substring(0, recibido.indexOf('['));
+        if (!baseEsp.equals(baseRec)) return false;
+
+        List<String> dimsEsp = extraerDimensiones(esperado);
+        List<String> dimsRec = extraerDimensiones(recibido);
+        if (dimsEsp.size() != dimsRec.size()) return false;
+
+        for (int i = 0; i < dimsEsp.size(); i++) {
+            String de = dimsEsp.get(i);
+            if (de.isEmpty()) continue; // dimensión abierta en el parámetro — no se exige
+            if (!de.equals(dimsRec.get(i))) return false;
+        }
+        return true;
     }
 
 
@@ -146,17 +216,38 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     @Override
     public String visitDeclaration(MiniCParser.DeclarationContext ctx) {
-        String tipo = ctx.typeSpecifier().getText();
+        String tipoBase = ctx.typeSpecifier().getText();
 
         for (MiniCParser.DeclaratorContext decl : ctx.declaratorList().declarator()) {
             String nombre;
             String categoria;
             int dimensiones = 0;
             int[] tamanios = null;
+            Token tok;
+            // Dónde vive el '= expr' de la inicialización — para arreglos y
+            // variables normales está directo en 'decl', pero para punteros
+            // ('*' declarator) la gramática anida el '=' en el declarator
+            // INTERNO (ej. en "int* p = &x;", el '=' pertenece al declarator
+            // de "p", no al de "* p").
+            MiniCParser.ExprContext inicializador;
 
             if (decl.getChild(0).getText().equals("*")) {
-                nombre    = decl.declarator().IDENTIFIER().getText();
-                categoria = "puntero";
+                MiniCParser.DeclaratorContext interno = decl.declarator();
+
+                if (interno.getChild(0).getText().equals("*")) {
+                    error(ctx.getStart(), "Mini-C solo soporta punteros de un nivel "
+                            + "('T*'); no se soportan punteros a punteros ('T**')");
+                    continue;
+                }
+                if (interno.INTEGER_CONST() != null && !interno.INTEGER_CONST().isEmpty()) {
+                    error(ctx.getStart(), "no se soportan arreglos de punteros en Mini-C");
+                    continue;
+                }
+
+                nombre        = interno.IDENTIFIER().getText();
+                categoria     = "puntero";
+                inicializador = interno.expr();
+                tok           = interno.IDENTIFIER().getSymbol();
             } else if (decl.INTEGER_CONST() != null && !decl.INTEGER_CONST().isEmpty()) {
                 nombre    = decl.IDENTIFIER().getText();
                 categoria = "arreglo";
@@ -165,33 +256,40 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
                 for (int i = 0; i < dimensiones; i++) {
                     tamanios[i] = Integer.parseInt(decl.INTEGER_CONST(i).getText());
                 }
+                inicializador = decl.expr();
+                tok = decl.IDENTIFIER().getSymbol();
             } else {
-                nombre    = decl.IDENTIFIER().getText();
-                categoria = "variable";
+                nombre        = decl.IDENTIFIER().getText();
+                categoria     = "variable";
+                inicializador = decl.expr();
+                tok           = decl.IDENTIFIER().getSymbol();
             }
 
-            int linea = decl.IDENTIFIER() != null
-                    ? decl.IDENTIFIER().getSymbol().getLine()
-                    : ctx.getStart().getLine();
+            // Tipo final tal como se usará en chequeos y se imprimirá en la
+            // tabla de símbolos: para punteros incluye el sufijo '*' (ej.
+            // "int*"), de modo que el resto del visitor pueda reutilizar el
+            // sistema de tipos basado en String sin lógica especial — solo
+            // checa si el tipo termina en '*' (ver esPuntero/tipoBase).
+            String tipo = categoria.equals("puntero") ? tipoBase + "*" : tipoBase;
 
             System.out.println("  [Visitor] → Declaración: " + tipo + " " + nombre
                     + (dimensiones > 0 ? " (" + dimensiones + "D)" : ""));
 
-            Symbol s = new Symbol(nombre, tipo, categoria, linea);
+            Symbol s = new Symbol(nombre, tipo, categoria, tok.getLine());
             s.dimensiones = dimensiones;
             s.tamanios = tamanios;
             if (!tabla.agregar(s)) {
-                error(linea, "'" + nombre + "' ya fue declarado en este ámbito");
+                error(tok, "'" + nombre + "' ya fue declarado en este ámbito");
             }
 
-            if (decl.expr() != null) {
+            if (inicializador != null) {
                 if (categoria.equals("arreglo")) {
-                    error(linea, "no se puede inicializar el arreglo '" + nombre
+                    error(tok, "no se puede inicializar el arreglo '" + nombre
                             + "' con un valor escalar");
                 } else {
-                    String tipoExpr = visit(decl.expr());
+                    String tipoExpr = visit(inicializador);
                     if (tipoExpr != null && !compatiblePromocion(tipo, tipoExpr)) {
-                        error(linea, "no se puede inicializar '" + nombre + "' de tipo '"
+                        error(tok, "no se puede inicializar '" + nombre + "' de tipo '"
                                 + tipo + "' con valor de tipo '" + tipoExpr + "'");
                     }
                 }
@@ -201,28 +299,57 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         return null;
     }
 
+    private String tipoDeParam(MiniCParser.ParamContext param) {
+        String base = param.typeSpecifier().getText();
+
+        if (param.declarator() != null) {
+            MiniCParser.DeclaratorContext decl = param.declarator();
+            if (decl.getChild(0).getText().equals("*")) {
+                return base + "*";
+            }
+            if (decl.INTEGER_CONST() != null && !decl.INTEGER_CONST().isEmpty()) {
+                // ej. int m[2][3]  →  "int[2][3]"
+                StringBuilder sb = new StringBuilder(base);
+                for (var n : decl.INTEGER_CONST()) {
+                    sb.append("[").append(n.getText()).append("]");
+                }
+                return sb.toString();
+            }
+            return base;
+        }
+
+        if (param.INTEGER_CONST() != null) {
+            // ej. int m[][3]  →  "int[][3]" (primera dimensión abierta:
+            // no se exige tamaño exacto al validar argumentos en visitCall)
+            return base + "[][" + param.INTEGER_CONST().getText() + "]";
+        }
+
+        return base;
+    }
+
     @Override
     public String visitFuncDef(MiniCParser.FuncDefContext ctx) {
         String tipo   = ctx.typeSpecifier().getText();
         String nombre = ctx.IDENTIFIER().getText();
-        int    linea  = ctx.IDENTIFIER().getSymbol().getLine();
+        Token  tok    = ctx.IDENTIFIER().getSymbol();
 
         System.out.println("  [Visitor] → Función   : " + nombre + " (" + tipo + ")");
 
         List<String> tiposParams = new ArrayList<>();
         if (ctx.params() != null) {
             for (MiniCParser.ParamContext param : ctx.params().param()) {
-                tiposParams.add(param.typeSpecifier().getText());
+                tiposParams.add(tipoDeParam(param));
             }
         }
 
-        Symbol s = new Symbol(nombre, tipo, "funcion", linea, tiposParams);
+        Symbol s = new Symbol(nombre, tipo, "funcion", tok.getLine(), tiposParams);
         if (!tabla.agregar(s)) {
-            error(linea, "función '" + nombre + "' ya fue declarada");
+            error(tok, "función '" + nombre + "' ya fue declarada");
         }
 
         tabla.entrar(nombre);
 
+        indiceParametroActual = 0;
         if (ctx.params() != null) {
             for (MiniCParser.ParamContext param : ctx.params().param()) {
                 visitParam(param);
@@ -247,43 +374,66 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     @Override
     public String visitParam(MiniCParser.ParamContext ctx) {
-        String tipo = ctx.typeSpecifier().getText();
+        String tipoBase = ctx.typeSpecifier().getText();
         String nombre;
         String categoria;
-        int    linea;
+        Token  tok;
         int    dimensiones = 0;
         int[]  tamanios = null;
 
         if (ctx.declarator() != null) {
             MiniCParser.DeclaratorContext decl = ctx.declarator();
-            nombre    = decl.IDENTIFIER() != null
-                    ? decl.IDENTIFIER().getText()
-                    : decl.declarator().IDENTIFIER().getText();
-            linea     = ctx.getStart().getLine();
-            boolean esArregloSimple = decl.INTEGER_CONST() != null && !decl.INTEGER_CONST().isEmpty();
-            categoria = esArregloSimple ? "arreglo" : "parametro";
-            if (esArregloSimple) {
-                dimensiones = decl.INTEGER_CONST().size();
-                tamanios = new int[dimensiones];
-                for (int i = 0; i < dimensiones; i++) {
-                    tamanios[i] = Integer.parseInt(decl.INTEGER_CONST(i).getText());
+            boolean esPuntero = decl.getChild(0).getText().equals("*");
+
+            if (esPuntero) {
+                // ej: int* b  →  decl es '* declarator', el IDENTIFIER real
+                // ("b") vive en el declarator interno (igual que en
+                // visitDeclaration). Antes este caso caía en el 'else' de
+                // abajo y el parámetro quedaba registrado como escalar
+                // común — perdiendo por completo que era un puntero.
+                MiniCParser.DeclaratorContext interno = decl.declarator();
+                if (interno.getChild(0).getText().equals("*")) {
+                    error(ctx.getStart(), "Mini-C solo soporta punteros de un nivel "
+                            + "('T*'); no se soportan punteros a punteros ('T**')");
+                    return null;
+                }
+                nombre    = interno.IDENTIFIER().getText();
+                tok       = interno.IDENTIFIER().getSymbol();
+                categoria = "puntero";
+            } else {
+                nombre    = decl.IDENTIFIER().getText();
+                tok       = decl.IDENTIFIER().getSymbol();
+                boolean esArregloSimple = decl.INTEGER_CONST() != null && !decl.INTEGER_CONST().isEmpty();
+                categoria = esArregloSimple ? "arreglo" : "parametro";
+                if (esArregloSimple) {
+                    dimensiones = decl.INTEGER_CONST().size();
+                    tamanios = new int[dimensiones];
+                    for (int i = 0; i < dimensiones; i++) {
+                        tamanios[i] = Integer.parseInt(decl.INTEGER_CONST(i).getText());
+                    }
                 }
             }
         } else {
             nombre      = ctx.IDENTIFIER().getText();
-            linea       = ctx.IDENTIFIER().getSymbol().getLine();
+            tok         = ctx.IDENTIFIER().getSymbol();
             categoria   = "arreglo";
             dimensiones = 2;
+            // int m[][3]  →  primera dimensión abierta (-1 = sin tamaño fijo,
+            // no se exige al validar argumentos en visitCall).
+            tamanios    = new int[]{-1, Integer.parseInt(ctx.INTEGER_CONST().getText())};
         }
+
+        String tipo = categoria.equals("puntero") ? tipoBase + "*" : tipoBase;
 
         System.out.println("  [Visitor] → Parámetro  : " + tipo + " " + nombre
                 + (dimensiones > 0 ? " (" + dimensiones + "D)" : ""));
 
-        Symbol s = new Symbol(nombre, tipo, categoria, linea);
+        Symbol s = new Symbol(nombre, tipo, categoria, tok.getLine());
         s.dimensiones = dimensiones;
         s.tamanios = tamanios;
+        s.indiceParametro = indiceParametroActual++;
         if (!tabla.agregar(s)) {
-            error(linea, "parámetro '" + nombre + "' duplicado");
+            error(tok, "parámetro '" + nombre + "' duplicado");
         }
         return null;
     }
@@ -307,11 +457,11 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     @Override
     public String visitReturnStmt(MiniCParser.ReturnStmtContext ctx) {
-        int linea = ctx.getStart().getLine();
+        Token tok = ctx.getStart();
 
         if (ctx.expr() == null) {
             if (tipoRetornoActual != null && !tipoRetornoActual.equals("void")) {
-                error(linea, "función de tipo '" + tipoRetornoActual
+                error(tok, "función de tipo '" + tipoRetornoActual
                         + "' debe retornar un valor");
             }
             return null;
@@ -321,9 +471,9 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         if (tipoRetornoActual != null && tipoExpr != null) {
             if (tipoRetornoActual.equals("void")) {
-                error(linea, "función de tipo 'void' no puede retornar un valor");
+                error(tok, "función de tipo 'void' no puede retornar un valor");
             } else if (!compatiblePromocion(tipoRetornoActual, tipoExpr)) {
-                error(linea, "se esperaba retornar '" + tipoRetornoActual
+                error(tok, "se esperaba retornar '" + tipoRetornoActual
                         + "', se recibió '" + tipoExpr + "'");
             }
         }
@@ -334,7 +484,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
     @Override
     public String visitBreakStmt(MiniCParser.BreakStmtContext ctx) {
         if (nivelLoop == 0) {
-            error(ctx.getStart().getLine(), "'break' fuera de un ciclo");
+            error(ctx.getStart(), "'break' fuera de un ciclo");
         }
         return null;
     }
@@ -342,7 +492,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
     @Override
     public String visitContinueStmt(MiniCParser.ContinueStmtContext ctx) {
         if (nivelLoop == 0) {
-            error(ctx.getStart().getLine(), "'continue' fuera de un ciclo");
+            error(ctx.getStart(), "'continue' fuera de un ciclo");
         }
         return null;
     }
@@ -351,7 +501,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
     public String visitIfStmt(MiniCParser.IfStmtContext ctx) {
         String tipoCond = visit(ctx.expr());
         if (tipoCond != null && !esCondicionValida(tipoCond)) {
-            error(ctx.getStart().getLine(),
+            error(ctx.getStart(),
                     "la condición de 'if' debe ser 'bool' o 'int', se recibió '" + tipoCond + "'");
         }
 
@@ -365,7 +515,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
     public String visitWhileStmt(MiniCParser.WhileStmtContext ctx) {
         String tipoCond = visit(ctx.expr());
         if (tipoCond != null && !esCondicionValida(tipoCond)) {
-            error(ctx.getStart().getLine(),
+            error(ctx.getStart(),
                     "la condición de 'while' debe ser 'bool' o 'int', se recibió '" + tipoCond + "'");
         }
 
@@ -383,7 +533,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         String tipoCond = visit(ctx.expr());
         if (tipoCond != null && !esCondicionValida(tipoCond)) {
-            error(ctx.getStart().getLine(),
+            error(ctx.getStart(),
                     "la condición de 'do-while' debe ser 'bool' o 'int', se recibió '" + tipoCond + "'");
         }
         return null;
@@ -397,7 +547,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         if (!expresiones.isEmpty()) {
             String tipoCond = visit(expresiones.get(0));
             if (tipoCond != null && !esCondicionValida(tipoCond)) {
-                error(ctx.getStart().getLine(),
+                error(ctx.getStart(),
                         "la condición de 'for' debe ser 'bool' o 'int', se recibió '" + tipoCond + "'");
             }
 
@@ -415,14 +565,14 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
     @Override
     public String visitAssignmentExpr(MiniCParser.AssignmentExprContext ctx) {
         if (ctx.lvalue() != null) {
-            int linea = ctx.getStart().getLine();
+            Token tok = ctx.getStart();
             String nombre = ctx.lvalue().IDENTIFIER().getText();
 
             String tipoIzq = visit(ctx.lvalue());
             String tipoDer = visit(ctx.assignmentExpr());
 
             if (tipoIzq != null && tipoDer != null && !compatiblePromocion(tipoIzq, tipoDer)) {
-                error(linea, "no se puede asignar valor de tipo '" + tipoDer
+                error(tok, "no se puede asignar valor de tipo '" + tipoDer
                         + "' a '" + nombre + "' de tipo '" + tipoIzq + "'");
             }
             return tipoIzq;
@@ -432,15 +582,15 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     @Override
     public String visitLogicalOrExpr(MiniCParser.LogicalOrExprContext ctx) {
-        return chequearLogico(ctx.logicalAndExpr(), ctx.getStart().getLine());
+        return chequearLogico(ctx.logicalAndExpr(), ctx.getStart());
     }
 
     @Override
     public String visitLogicalAndExpr(MiniCParser.LogicalAndExprContext ctx) {
-        return chequearLogico(ctx.equalityExpr(), ctx.getStart().getLine());
+        return chequearLogico(ctx.equalityExpr(), ctx.getStart());
     }
 
-    private String chequearLogico(List<? extends org.antlr.v4.runtime.tree.ParseTree> operandos, int linea) {
+    private String chequearLogico(List<? extends org.antlr.v4.runtime.tree.ParseTree> operandos, Token tok) {
         List<String> tipos = new ArrayList<>();
         for (var op : operandos) {
             tipos.add(visit(op));
@@ -452,7 +602,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         for (String tipo : tipos) {
             if (tipo != null && !tipo.equals("bool")) {
-                error(linea, "operador lógico requiere operandos 'bool', se recibió '" + tipo + "'");
+                error(tok, "operador lógico requiere operandos 'bool', se recibió '" + tipo + "'");
             }
         }
         return "bool";
@@ -474,7 +624,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         for (int i = 1; i < tipos.size(); i++) {
             String tipoActual = tipos.get(i);
             if (tipoPrevio != null && tipoActual != null && !compatiblePromocion(tipoPrevio, tipoActual)) {
-                error(ctx.getStart().getLine(), "no se puede comparar '" + tipoPrevio
+                error(ctx.getStart(), "no se puede comparar '" + tipoPrevio
                         + "' con '" + tipoActual + "'");
             }
             tipoPrevio = tipoActual;
@@ -496,7 +646,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         for (String tipo : tipos) {
             if (tipo != null && !esNumerico(tipo)) {
-                error(ctx.getStart().getLine(), "operador relacional requiere 'int' o 'char', se recibió '" + tipo + "'");
+                error(ctx.getStart(), "operador relacional requiere 'int' o 'char', se recibió '" + tipo + "'");
             }
         }
         return "bool";
@@ -504,15 +654,15 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     @Override
     public String visitAdditiveExpr(MiniCParser.AdditiveExprContext ctx) {
-        return chequearAritmetico(ctx.multiplicativeExpr(), ctx.getStart().getLine());
+        return chequearAritmetico(ctx.multiplicativeExpr(), ctx.getStart());
     }
 
     @Override
     public String visitMultiplicativeExpr(MiniCParser.MultiplicativeExprContext ctx) {
-        return chequearAritmetico(ctx.unaryExpr(), ctx.getStart().getLine());
+        return chequearAritmetico(ctx.unaryExpr(), ctx.getStart());
     }
 
-    private String chequearAritmetico(List<? extends org.antlr.v4.runtime.tree.ParseTree> operandos, int linea) {
+    private String chequearAritmetico(List<? extends org.antlr.v4.runtime.tree.ParseTree> operandos, Token tok) {
         List<String> tipos = new ArrayList<>();
         for (var op : operandos) {
             tipos.add(visit(op));
@@ -524,7 +674,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
         for (String tipo : tipos) {
             if (tipo != null && !esNumerico(tipo)) {
-                error(linea, "operador aritmético requiere 'int' o 'char', se recibió '" + tipo + "'");
+                error(tok, "operador aritmético requiere 'int' o 'char', se recibió '" + tipo + "'");
             }
         }
         return "int";
@@ -536,16 +686,42 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
             return visit(ctx.primary());
         }
         String op = ctx.getChild(0).getText();
-        String tipo = visit(ctx.unaryExpr());
+        MiniCParser.UnaryExprContext operandoCtx = ctx.unaryExpr();
+        String tipo = visit(operandoCtx);
 
         if (op.equals("!") && tipo != null && !tipo.equals("bool")) {
-            error(ctx.getStart().getLine(), "operador '!' requiere 'bool', se recibió '" + tipo + "'");
+            error(ctx.getStart(), "operador '!' requiere 'bool', se recibió '" + tipo + "'");
         }
         if (op.equals("-")) {
             if (tipo != null && !esNumerico(tipo)) {
-                error(ctx.getStart().getLine(), "operador '-' unario requiere 'int' o 'char', se recibió '" + tipo + "'");
+                error(ctx.getStart(), "operador '-' unario requiere 'int' o 'char', se recibió '" + tipo + "'");
             }
             return "int";
+        }
+        if (op.equals("&")) {
+            // El operando debe ser exactamente una variable o un elemento de
+            // arreglo (algo con dirección real en memoria) — no la dirección
+            // de un literal, una llamada, o una expresión calculada.
+            boolean esDireccionable = operandoCtx.primary() != null
+                    && operandoCtx.primary().lvalue() != null;
+            if (!esDireccionable) {
+                error(ctx.getStart(), "'&' solo puede aplicarse a una variable o a un elemento de arreglo");
+                return null;
+            }
+            if (tipo == null) return null;
+            if (esPuntero(tipo)) {
+                error(ctx.getStart(), "no se soportan punteros a punteros (Mini-C solo admite un nivel de indirección)");
+                return null;
+            }
+            return tipo + "*";
+        }
+        if (op.equals("*")) {
+            if (tipo == null) return null;
+            if (!esPuntero(tipo)) {
+                error(ctx.getStart(), "operador '*' (desreferencia) requiere un puntero, se recibió '" + tipo + "'");
+                return null;
+            }
+            return tipoBase(tipo);
         }
         return tipo;
     }
@@ -564,35 +740,53 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
 
     @Override
     public String visitLvalue(MiniCParser.LvalueContext ctx) {
+        boolean esDesreferencia = ctx.getChild(0).getText().equals("*");
+
         String nombre = ctx.IDENTIFIER().getText();
-        int    linea  = ctx.IDENTIFIER().getSymbol().getLine();
+        Token  tok    = ctx.IDENTIFIER().getSymbol();
 
         Symbol s = tabla.buscar(nombre);
         if (s == null) {
-            error(linea, "'" + nombre + "' no fue declarado");
+            error(tok, "'" + nombre + "' no fue declarado");
             return null;
+        }
+
+        if (esDesreferencia) {
+            // *p = expr;  →  el resultado es el tipo al que apunta 'p'
+            // (la posición de memoria que se va a leer/escribir), no el
+            // tipo del puntero en sí.
+            if (!esPuntero(s.tipo)) {
+                error(tok, "'" + nombre + "' no es un puntero, no se puede desreferenciar con '*'");
+                return null;
+            }
+            return tipoBase(s.tipo);
         }
 
         int indicesUsados = ctx.expr().size();
 
         if (s.categoria.equals("arreglo")) {
             if (indicesUsados == 0) {
-                error(linea, "no se puede usar el arreglo '" + nombre
-                        + "' sin índices (asignación de arreglo completo no permitida)");
-                return null;
+                // Usar el arreglo completo sin índices solo es válido para
+                // pasarlo como argumento de función (paso por referencia,
+                // ej. suma_fila(tabla, i)). Devolvemos un tipo que codifica
+                // la forma real (ej. "int[2][3]") — visitCall lo valida
+                // contra la forma del parámetro; cualquier otro uso (suma,
+                // asignación a escalar, condición, etc.) lo va a rechazar
+                // igual, porque ese tipo nunca calza con un tipo escalar.
+                return s.tipo + formaArreglo(s.tamanios, s.dimensiones);
             } else if (indicesUsados != s.dimensiones) {
-                error(linea, "'" + nombre + "' fue declarado con " + s.dimensiones
+                error(tok, "'" + nombre + "' fue declarado con " + s.dimensiones
                         + " dimensión(es), se usó con " + indicesUsados + " índice(s)");
             }
         } else if (indicesUsados > 0) {
-            error(linea, "'" + nombre + "' no es un arreglo, no admite indexación");
+            error(tok, "'" + nombre + "' no es un arreglo, no admite indexación");
         }
 
         for (int i = 0; i < ctx.expr().size(); i++) {
             MiniCParser.ExprContext idxExpr = ctx.expr(i);
             String tipoIdx = visit(idxExpr);
             if (tipoIdx != null && !tipoIdx.equals("int")) {
-                error(linea, "el índice de arreglo debe ser 'int', se recibió '" + tipoIdx + "'");
+                error(tok, "el índice de arreglo debe ser 'int', se recibió '" + tipoIdx + "'");
                 continue;
             }
 
@@ -603,7 +797,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
                 if (valorConstante != null) {
                     int tamanio = s.tamanios[i];
                     if (valorConstante < 0 || valorConstante >= tamanio) {
-                        error(linea, "índice " + valorConstante + " fuera de rango para '"
+                        error(tok, "índice " + valorConstante + " fuera de rango para '"
                                 + nombre + "' (dimensión " + (i + 1) + " tiene tamaño " + tamanio + ")");
                     }
                 }
@@ -616,17 +810,17 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
     @Override
     public String visitCall(MiniCParser.CallContext ctx) {
         String nombre = ctx.IDENTIFIER().getText();
-        int    linea  = ctx.IDENTIFIER().getSymbol().getLine();
+        Token  tok    = ctx.IDENTIFIER().getSymbol();
 
         Symbol s = tabla.buscar(nombre);
         if (s == null) {
-            error(linea, "función '" + nombre + "' no declarada");
+            error(tok, "función '" + nombre + "' no declarada");
             for (MiniCParser.ExprContext arg : ctx.expr()) visit(arg);
             return null;
         }
 
         if (!s.categoria.equals("funcion")) {
-            error(linea, "'" + nombre + "' no es una función");
+            error(tok, "'" + nombre + "' no es una función");
             for (MiniCParser.ExprContext arg : ctx.expr()) visit(arg);
             return s.tipo;
         }
@@ -641,7 +835,7 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
         List<String> tiposParams = s.tiposParametros;
 
         if (tiposParams != null && tiposParams.size() != args.size()) {
-            error(linea, "función '" + nombre + "' espera " + tiposParams.size()
+            error(tok, "función '" + nombre + "' espera " + tiposParams.size()
                     + " argumento(s), se recibieron " + args.size());
             return s.tipo;
         }
@@ -651,8 +845,8 @@ public class SemanticVisitor extends MiniCBaseVisitor<String> {
                 String tipoEsperado = tiposParams.get(i);
                 String tipoRecibido = tiposArgs.get(i);
                 if (tipoEsperado != null && tipoRecibido != null
-                        && !compatiblePromocion(tipoEsperado, tipoRecibido)) {
-                    error(linea, "argumento " + (i + 1) + " de '" + nombre
+                        && !tipoArgumentoValido(tipoEsperado, tipoRecibido)) {
+                    error(tok, "argumento " + (i + 1) + " de '" + nombre
                             + "' debe ser '" + tipoEsperado + "', se recibió '" + tipoRecibido + "'");
                 }
             }

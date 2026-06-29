@@ -14,6 +14,12 @@ public class Symbol {
 
     public int[] tamanios = null;
 
+    /** Posición (0-based) en la lista de parámetros de su función, o -1
+     *  si este símbolo no es un parámetro (variable local, global, etc.).
+     *  La usa el backend MIPS para decidir si llega por registro
+     *  ($a0-$a3) o por stack al llamar a la función. */
+    public int indiceParametro = -1;
+
     public Symbol(String nombre, String tipo, String categoria, int linea) {
         this.nombre = nombre;
         this.tipo = tipo;

@@ -2,11 +2,13 @@ package com.minic.ir;
 
 /**
  * Genera nombres únicos para temporales (t1, t2, ...) y etiquetas
- * (L1, L2, ...) durante la generación de TAC. Cada función debe usar
- * su propia instancia (o resetear los contadores) para que los
- * temporales no se compartan innecesariamente entre funciones —
- * aunque tampoco es un error si los números se repiten entre
- * funciones distintas, ya que sus ámbitos en MIPS serán independientes.
+ * (L1, L2, ...) durante la generación de TAC.
+ *
+ * El TACGenerator usa UNA sola instancia para todo el programa, de modo
+ * que los temporales y etiquetas son únicos globalmente (no se reinician
+ * por función). Esto se eligió a propósito: simplifica el backend MIPS32
+ * de la Fase 4, porque no hay colisiones de nombres entre funciones al
+ * momento de asignar registros o emitir etiquetas en el archivo .s.
  */
 public class GeneradorNombres {
 

@@ -146,6 +146,7 @@ call
 lvalue
     : IDENTIFIER ('[' expr ']')*
     | IDENTIFIER '[' expr ']' '[' expr ']'
+    | '*' IDENTIFIER
     ;
 
 // ─── TOKENS ──────────────────────────────────────────────────────────────────

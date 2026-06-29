@@ -1,20 +1,85 @@
 package com.minic;
 
 import com.minic.ir.TACGenerator;
+import com.minic.mips.MIPSGenerator;
 import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.tree.*;
 
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+
+/**
+ * Punto de entrada del compilador Mini-C.
+ *
+ * Uso:  minicc input.mc -S -o output.s [-O] [--dump-ir]
+ *
+ *   -S            genera código MIPS32 (.s) — sin esta bandera, el programa
+ *                 corre en "modo diagnóstico": imprime tokens, árbol de
+ *                 parseo, tabla de símbolos y TAC, sin generar ningún
+ *                 archivo (comportamiento histórico de Fases 1-3, se
+ *                 conserva para no romper los flujos de prueba existentes).
+ *   -o <archivo>  archivo de salida para el .s — obligatorio junto con -S.
+ *   -O            aplica constant folding sobre el TAC antes de generar
+ *                 MIPS, mostrando el IR antes y después en stdout.
+ *   --dump-ir     imprime el TAC a stdout también en modo -S (en modo
+ *                 diagnóstico el TAC ya se imprime siempre).
+ */
 public class Main {
 
     public static void main(String[] args) throws Exception {
 
-        String inputFile = args.length > 0 ? args[0] : null;
-        CharStream input;
-        if (inputFile != null) {
-            input = CharStreams.fromFileName(inputFile);
-        } else {
-            input = CharStreams.fromStream(System.in);
+        // Fuerza la salida a UTF-8 para que los acentos de los mensajes
+        // (TABLA DE SÍMBOLOS, [ERROR SEMÁNTICO], etc.) salgan correctos al
+        // redirigir la salida o ejecutar por `java -jar`, sin depender de la
+        // codificación por defecto de la consola.
+        System.setOut(new PrintStream(System.out, true, StandardCharsets.UTF_8));
+        System.setErr(new PrintStream(System.err, true, StandardCharsets.UTF_8));
+
+        // ─── argumentos: minicc input.mc -S -o output.s [-O] [--dump-ir] ───
+        String inputFile  = null;
+        String outputFile = null;
+        boolean modoMips  = false;
+        boolean optimizar = false;
+        boolean dumpIr    = false;
+
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "-S":
+                    modoMips = true;
+                    break;
+                case "-O":
+                    optimizar = true;
+                    break;
+                case "--dump-ir":
+                    dumpIr = true;
+                    break;
+                case "-o":
+                    if (i + 1 >= args.length) {
+                        System.err.println("Falta el nombre de archivo después de -o");
+                        return;
+                    }
+                    outputFile = args[++i];
+                    break;
+                default:
+                    if (args[i].startsWith("-")) {
+                        System.err.println("Argumento no reconocido: " + args[i]);
+                        return;
+                    }
+                    inputFile = args[i];
+            }
         }
+
+        if (modoMips && outputFile == null) {
+            System.err.println("Uso: minicc input.mc -S -o output.s [-O] [--dump-ir]");
+            System.err.println("-S requiere -o <archivo>");
+            return;
+        }
+
+        CharStream input = (inputFile != null)
+                ? CharStreams.fromFileName(inputFile)
+                : CharStreams.fromStream(System.in);
 
         MiniCLexer lexer = new MiniCLexer(input);
         lexer.removeErrorListeners();
@@ -24,17 +89,19 @@ public class Main {
         CommonTokenStream tokens = new CommonTokenStream(lexer);
         tokens.fill();
 
-        System.out.println("TOKENS");
-        System.out.println("------");
-        for (Token tok : tokens.getTokens()) {
-            if (tok.getType() == Token.EOF) continue;
-            String typeName = MiniCLexer.VOCABULARY.getSymbolicName(tok.getType());
-            if (typeName == null) typeName = "'" + tok.getText() + "'";
-            System.out.printf("  [%3d:%2d]  %-22s  %s%n",
-                    tok.getLine(), tok.getCharPositionInLine(),
-                    typeName, tok.getText());
+        if (!modoMips) {
+            System.out.println("TOKENS");
+            System.out.println("------");
+            for (Token tok : tokens.getTokens()) {
+                if (tok.getType() == Token.EOF) continue;
+                String typeName = MiniCLexer.VOCABULARY.getSymbolicName(tok.getType());
+                if (typeName == null) typeName = "'" + tok.getText() + "'";
+                System.out.printf("  [%3d:%2d]  %-22s  %s%n",
+                        tok.getLine(), tok.getCharPositionInLine(),
+                        typeName, tok.getText());
+            }
+            System.out.println();
         }
-        System.out.println();
 
         MiniCParser parser = new MiniCParser(tokens);
         parser.removeErrorListeners();
@@ -45,40 +112,70 @@ public class Main {
 
         int totalErrors = lexerErrors.getErrorCount() + parserErrors.getErrorCount();
 
-        System.out.println("PARSE TREE — Mini-C Compiler");
-        System.out.println("-----------------------------");
-        System.out.println();
-        if (totalErrors == 0) {
-            printTree(tree, parser, "", true);
-        } else {
-            System.out.println("  No se muestra el árbol debido a errores.");
+        if (!modoMips) {
+            System.out.println("PARSE TREE — Mini-C Compiler");
+            System.out.println("-----------------------------");
+            System.out.println();
+            if (totalErrors == 0) {
+                printTree(tree, parser, "", true);
+            } else {
+                System.out.println("  No se muestra el árbol debido a errores.");
+            }
+            System.out.println();
         }
-        System.out.println();
 
         SemanticVisitor visitor = null;
         if (totalErrors == 0) {
-            System.out.println("ANÁLISIS SEMÁNTICO — Recorrido del Visitor");
-            System.out.println("-------------------------------------------");
-            System.out.println();
+            if (!modoMips) {
+                System.out.println("ANÁLISIS SEMÁNTICO — Recorrido del Visitor");
+                System.out.println("-------------------------------------------");
+                System.out.println();
+            }
             visitor = new SemanticVisitor();
             visitor.visit(tree);
-            visitor.imprimirTabla();
-
+            if (!modoMips) {
+                visitor.imprimirTabla();
+            }
             totalErrors += visitor.getErrores();
         }
 
-        // Solo se genera si no hubo NINGÚN error
-        if (totalErrors == 0) {
+        if (totalErrors > 0) {
+            if (modoMips) {
+                System.err.println("Errores encontrados: " + totalErrors + " — no se genera MIPS.");
+            }
+        } else {
             TACGenerator tacGen = new TACGenerator(visitor.getTabla());
             tacGen.visit(tree);
-            tacGen.imprimirCodigo();
+
+            java.util.List<com.minic.ir.Instruccion> codigoFinal = tacGen.getCodigo();
+
+            if (modoMips) {
+                if (optimizar) {
+                    TACGenerator.imprimirCodigo(codigoFinal,
+                            "CÓDIGO INTERMEDIO (TAC) — ANTES de optimizar");
+                    codigoFinal = com.minic.ir.OptimizadorConstantes.plegarConstantes(codigoFinal);
+                    TACGenerator.imprimirCodigo(codigoFinal,
+                            "CÓDIGO INTERMEDIO (TAC) — DESPUÉS de optimizar (constant folding)");
+                } else if (dumpIr) {
+                    TACGenerator.imprimirCodigo(codigoFinal, "CÓDIGO INTERMEDIO (TAC)");
+                }
+
+                MIPSGenerator mipsGen = new MIPSGenerator(codigoFinal, visitor.getTabla());
+                String mips = mipsGen.generar();
+                Files.writeString(Paths.get(outputFile), mips);
+                System.out.println("MIPS generado en " + outputFile);
+            } else {
+                tacGen.imprimirCodigo();
+            }
         }
 
-        System.out.println();
-        System.out.println("---------------------------------------");
-        System.out.printf(" Tokens procesados  : %d%n", tokens.size());
-        System.out.printf(" Errores encontrados: %d%n", totalErrors);
-        System.out.println("---------------------------------------");
+        if (!modoMips) {
+            System.out.println();
+            System.out.println("---------------------------------------");
+            System.out.printf(" Tokens procesados  : %d%n", tokens.size());
+            System.out.printf(" Errores encontrados: %d%n", totalErrors);
+            System.out.println("---------------------------------------");
+        }
     }
 
     static void printTree(ParseTree tree, MiniCParser parser, String prefix, boolean isLast) {

@@ -23,6 +23,11 @@ package com.minic.ir;
  *   ARR_STORE      destino[op1] = op2                 (escribir en arreglo; destino = arreglo, op1 = índice, op2 = valor)
  *   FUNC_INICIO    FUNCTION destino:                   (encabezado de función)
  *   FUNC_FIN       END FUNCTION destino                 (cierre de función)
+ *   ADDR           destino = &op1                     (dirección de una variable;
+ *                  destino = &op1[op2]                  o de un elemento de arreglo si op2 != null;
+ *                                                        op1 = nombre, op2 = índice ya linealizado o null)
+ *   PTR_LOAD       destino = *op1                       (leer el valor apuntado por op1)
+ *   PTR_STORE      *destino = op1                       (escribir op1 en la dirección apuntada por destino)
  */
 public enum OpTAC {
     ASIGNAR,
@@ -39,5 +44,8 @@ public enum OpTAC {
     ARR_LOAD,
     ARR_STORE,
     FUNC_INICIO,
-    FUNC_FIN
+    FUNC_FIN,
+    ADDR,
+    PTR_LOAD,
+    PTR_STORE
 }

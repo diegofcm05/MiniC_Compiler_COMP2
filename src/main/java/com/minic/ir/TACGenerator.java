@@ -110,12 +110,26 @@ public class TACGenerator extends MiniCBaseVisitor<String> {
     @Override
     public String visitDeclaration(MiniCParser.DeclarationContext ctx) {
         for (MiniCParser.DeclaratorContext decl : ctx.declaratorList().declarator()) {
-            if (decl.expr() == null) continue; // sin inicialización, nada que generar
+            String nombre;
+            MiniCParser.ExprContext inicializador;
 
-            // Arreglos no llegan aquí con expr() != null (el SemanticVisitor
-            // ya lo prohíbe), así que esto es siempre una variable simple.
-            String nombre = decl.IDENTIFIER().getText();
-            String valor  = visit(decl.expr());
+            if (decl.getChild(0).getText().equals("*")) {
+                // int* p = &x;  →  el '=' vive en el declarator INTERNO
+                // (decl.declarator()), no en 'decl' — ver la nota idéntica
+                // en SemanticVisitor.visitDeclaration.
+                MiniCParser.DeclaratorContext interno = decl.declarator();
+                nombre        = interno.IDENTIFIER().getText();
+                inicializador = interno.expr();
+            } else {
+                nombre        = decl.IDENTIFIER().getText();
+                inicializador = decl.expr();
+            }
+
+            if (inicializador == null) continue; // sin inicialización, nada que generar
+
+            // Arreglos no llegan aquí con inicializador (el SemanticVisitor
+            // ya lo prohíbe), así que esto es siempre variable o puntero.
+            String valor = visit(inicializador);
             emitir(Instruccion.asignar(nombre, valor));
         }
         return null;
@@ -132,6 +146,16 @@ public class TACGenerator extends MiniCBaseVisitor<String> {
         String valor = visit(ctx.assignmentExpr()); // lado derecho, recursivo
 
         MiniCParser.LvalueContext lv = ctx.lvalue();
+
+        if (lv.getChild(0).getText().equals("*")) {
+            // *p = valor;  →  escritura indirecta: el valor de 'p' es una
+            // dirección (asignada previamente vía &x), y aquí escribimos
+            // 'valor' en esa dirección — no en la variable 'p' misma.
+            String puntero = lv.IDENTIFIER().getText();
+            emitir(Instruccion.ptrStore(puntero, valor));
+            return valor;
+        }
+
         String nombre = lv.IDENTIFIER().getText();
         Symbol s = tabla.buscar(nombre);
 
@@ -389,18 +413,47 @@ public class TACGenerator extends MiniCBaseVisitor<String> {
         }
 
         String simbolo = ctx.getChild(0).getText();
+
+        if (simbolo.equals("&")) {
+            // El operando de '&' ya fue validado por SemanticVisitor como
+            // una variable o un elemento de arreglo (primary→lvalue), así
+            // que inspeccionamos esa estructura directamente en vez de
+            // hacer visit() genérico — visit() en una lvalue con índices
+            // generaría un ARR_LOAD (cargar el VALOR), pero aquí lo que
+            // queremos es la DIRECCIÓN, no el valor.
+            MiniCParser.LvalueContext lv = ctx.unaryExpr().primary().lvalue();
+            return direccionDe(lv);
+        }
+
         String operando = visit(ctx.unaryExpr());
 
-        // '*' (desreferencia) y '&' (dirección) quedan fuera del alcance
-        // actual del generador de TAC — Mini-C los acepta sintácticamente,
-        // pero su traducción a TAC/MIPS requeriría manejo de punteros que
-        // no se ha definido aún para esta fase.
-        if (simbolo.equals("*") || simbolo.equals("&")) {
-            return operando; // placeholder: se trata como no-op por ahora
+        if (simbolo.equals("*")) {
+            // Lectura indirecta: 'operando' es el valor del puntero (una
+            // dirección, ej. obtenida antes vía &x), y aquí leemos lo que
+            // hay almacenado en esa dirección.
+            String t = gen.nuevoTemporal();
+            emitir(Instruccion.ptrLoad(t, operando));
+            return t;
         }
 
         String t = gen.nuevoTemporal();
         emitir(Instruccion.unaria(t, simbolo, operando));
+        return t;
+    }
+
+    // Calcula la dirección de una variable simple o de un elemento de
+    // arreglo (usado por el operador '&'). Para arreglos reutiliza
+    // resolverIndiceArreglo para obtener el mismo índice linealizado que
+    // usan ARR_LOAD/ARR_STORE.
+    private String direccionDe(MiniCParser.LvalueContext lv) {
+        String nombre = lv.IDENTIFIER().getText();
+        String t = gen.nuevoTemporal();
+        if (lv.expr().isEmpty()) {
+            emitir(Instruccion.direccionDe(t, nombre, null));
+        } else {
+            String indice = resolverIndiceArreglo(lv);
+            emitir(Instruccion.direccionDe(t, nombre, indice));
+        }
         return t;
     }
 
@@ -426,8 +479,16 @@ public class TACGenerator extends MiniCBaseVisitor<String> {
         String nombre = ctx.IDENTIFIER().getText();
 
         if (ctx.expr().isEmpty()) {
-            // Variable simple: no hace falta "cargar" nada, su nombre
-            // ya es directamente usable como operando en el TAC.
+            Symbol s = tabla.buscar(nombre);
+            if (s != null && s.categoria.equals("arreglo")) {
+                // Arreglo completo sin índices: el SemanticVisitor solo lo
+                // permite como argumento de función — decae a su dirección
+                // base (igual que '&arr[0]'), para que el llamado pueda
+                // indexarlo usando esa dirección.
+                return direccionDe(ctx);
+            }
+            // Variable simple (o puntero): no hace falta "cargar" nada, su
+            // nombre ya es directamente usable como operando en el TAC.
             return nombre;
         }
 
@@ -472,10 +533,17 @@ public class TACGenerator extends MiniCBaseVisitor<String> {
     // ─── IMPRESIÓN DEL TAC COMPLETO ────────────────────────────────────────
 
     public void imprimirCodigo() {
+        imprimirCodigo(codigo, "CÓDIGO INTERMEDIO (TAC)");
+    }
+
+    /** Versión reutilizable — la usa Main.java para mostrar el TAC antes
+     *  y después de la optimización (-O), con un título distinto para
+     *  cada uno. */
+    public static void imprimirCodigo(List<Instruccion> lista, String titulo) {
         System.out.println();
-        System.out.println("CÓDIGO INTERMEDIO (TAC)");
+        System.out.println(titulo);
         System.out.println("-".repeat(60));
-        for (Instruccion instr : codigo) {
+        for (Instruccion instr : lista) {
             // Las etiquetas y encabezados de función no se indentan, para
             // que se distingan visualmente del código que contienen.
             if (instr.operador == OpTAC.ETIQUETA
