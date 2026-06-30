@@ -521,7 +521,14 @@ public class MIPSGenerator {
             char c = operando.charAt(1);
             text.append("    li ").append(registro).append(", ").append((int) c).append("\n");
         } else if (operando.startsWith("\"")) {
-            throw new IllegalStateException("No se puede cargar un literal de cadena como valor escalar: " + operando);
+            // Literal de cadena — su "valor" es la dirección en .data donde
+            // vive el texto. Se carga con 'la' (load address) en vez de 'lw',
+            // igual que hace emitirDireccionDeString para print_str.
+            String etiqueta = etiquetasLiteral.get(operando);
+            if (etiqueta == null) {
+                throw new IllegalStateException("Literal de cadena sin etiqueta en .data: " + operando);
+            }
+            text.append("    la ").append(registro).append(", ").append(etiqueta).append("\n");
         } else {
             text.append("    lw ").append(registro).append(", ").append(direccionDeVariable(operando)).append("\n");
         }
